@@ -1,3 +1,10 @@
 {
-  "cleanUrls": true
+  "name": "ece-clinic",
+  "version": "1.0.0",
+  "description": "ECE Clinic consultation queue & online consultation portal",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "googleapis": "^144.0.0"
+  }
 }
