@@ -262,6 +262,7 @@ ece-clinic/
 │  ├─ calendar.js       # GET   synced Google Calendar events
 │  ├─ settings.js       # GET/POST  queue routing setting
 │  ├─ staff-manage.js   # POST  admin add/edit/remove staff (Users+Staff)
+│  ├─ change-password.js # POST  user changes own password (verifies current)
 │  └─ setup.js          # GET   one-time: create tabs + headers (needs SETUP_KEY)
 ├─ get-refresh-token.js # optional one-time token helper (terminal)
 ├─ vercel.json

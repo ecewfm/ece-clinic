@@ -327,6 +327,7 @@
         <span id="whoRole">—</span>
       </div>
       <div class="avatar" id="whoAvatar">?</div>
+      <button id="pwBtn" class="btn btn-ghost" style="padding:8px 12px" onclick="openChangePassword()">Password</button>
       <button class="btn btn-ghost" style="padding:8px 12px" onclick="logout()">Sign out</button>
     </div>
   </header>
@@ -465,12 +466,13 @@ async function doLogin(){
   document.getElementById('app').classList.remove('hidden');
   paintShell();startQueueWatch();render();
 }
-function logout(){SESSION=null;stopQueueWatch();if(liveTimer){clearInterval(liveTimer);liveTimer=null;}document.getElementById('app').classList.add('hidden');
+function logout(){SESSION=null;stopQueueWatch();stopPublicSync();if(liveTimer){clearInterval(liveTimer);liveTimer=null;}if(location.hash){try{history.replaceState(null,'',location.pathname);}catch(e){}}document.getElementById('app').classList.add('hidden');
   document.getElementById('login').classList.remove('hidden');
   document.getElementById('loginPass').value="";}
 
 function paintShell(){
   if(!SESSION)return;
+  const pw=document.getElementById('pwBtn'); if(pw)pw.classList.remove('hidden');
   document.getElementById('whoName').textContent=SESSION.name;
   document.getElementById('whoRole').textContent=SESSION.role;
   document.getElementById('whoAvatar').textContent=(SESSION.name||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
@@ -482,12 +484,46 @@ function toast(msg){const t=document.createElement('div');t.className='toast';t.
 function modal(html){document.getElementById('modalRoot').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()">${html}</div>`;}
 function closeModal(){document.getElementById('modalRoot').innerHTML="";}
 
+/* ---------- change own password ---------- */
+function openChangePassword(){
+  if(!SESSION||!SESSION.id){toast('Not signed in');return;}
+  modal(`<div class="modal" style="width:min(420px,94vw)">
+    <div class="modal-h"><h3>Change password</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="modal-b">
+      <div class="field"><label>Current password <span class="req">*</span></label><input id="cp_cur" type="password" autocomplete="current-password"/></div>
+      <div class="field"><label>New password <span class="req">*</span></label><input id="cp_new" type="password" autocomplete="new-password"/></div>
+      <div class="field"><label>Confirm new password <span class="req">*</span></label><input id="cp_conf" type="password" autocomplete="new-password"/></div>
+      <div id="cp_err" class="login-err hidden"></div>
+    </div>
+    <div class="modal-f"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-accent" onclick="submitChangePassword()">Update password</button></div>
+  </div>`);
+}
+async function submitChangePassword(){
+  const g=id=>{const e=document.getElementById(id);return e?e.value:'';};
+  const cur=g('cp_cur'),nw=g('cp_new'),cf=g('cp_conf');
+  const err=document.getElementById('cp_err');
+  const show=m=>{err.textContent=m;err.classList.remove('hidden');};
+  if(!cur||!nw||!cf)return show('Fill in all three fields.');
+  if(nw.length<4)return show('New password must be at least 4 characters.');
+  if(nw!==cf)return show('New passwords do not match.');
+  try{
+    const res=await api('/change-password',{method:'POST',body:JSON.stringify({id:SESSION.id,currentPassword:cur,newPassword:nw})});
+    if(res&&res.error)return show(res.error);
+    toast('Password updated');closeModal();
+  }catch(e){ show(e.message||'Could not update password.'); }
+}
+
 /* ---------- data access (mock or live) ---------- */
 async function api(path,opts){
   if(!API_BASE){ return mockApi(path,opts); }
   const res=await fetch(API_BASE+path,{headers:{'Content-Type':'application/json'},...opts});
-  if(!res.ok)throw new Error('API '+res.status);
-  return res.json();
+  let data=null; try{ data=await res.json(); }catch(e){}
+  if(!res.ok){
+    const msg=(data&&data.error)?data.error:('API '+res.status);
+    const err=new Error(msg); err.body=data; throw err;
+  }
+  return data;
 }
 function mockApi(path,opts){
   const body=opts&&opts.body?JSON.parse(opts.body):{};
@@ -519,6 +555,11 @@ function mockApi(path,opts){
         return r({ok:true,id:body.id});
       }
       if(body.action==='delete'){MOCK.staff=MOCK.staff.filter(x=>x.id!==body.id);return r({ok:true});}
+    }
+    if(path==='/change-password'){
+      // demo: accept any current password 'demo'
+      if(body.currentPassword!=='demo')return r({error:'Current password is incorrect'});
+      return r({ok:true});
     }
     r({ok:true});
   },150));
@@ -1109,16 +1150,42 @@ async function submitBooking(){
 }
 
 /* ---------- PUBLIC BOOKING (no login) ---------- */
-function openPublic(){
+function openPublic(setHash){
   document.getElementById('login').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   SESSION={name:'',role:'public',email:''};
+  if(setHash!==false && location.hash!=='#book'){ try{location.hash='book';}catch(e){} }
   paintShellPublic();renderPublic();
+  startPublicSync();
 }
 function paintShellPublic(){
+  const pw=document.getElementById('pwBtn'); if(pw)pw.classList.add('hidden');
   document.getElementById('whoName').textContent='Public booking';
   document.getElementById('whoRole').textContent='No sign-in needed';
   document.getElementById('whoAvatar').textContent='+';
+}
+/* lightweight poll for the public page: refresh "Available now" + sync indicator */
+let publicWatch=null, publicSyncAge=null;
+function startPublicSync(){
+  stopPublicSync();
+  publicWatch=setInterval(refreshPublic,POLL_MS);
+  publicSyncAge=setInterval(updateSyncAge,1000);
+  refreshPublic(true);
+}
+function stopPublicSync(){
+  if(publicWatch){clearInterval(publicWatch);publicWatch=null;}
+  if(publicSyncAge){clearInterval(publicSyncAge);publicSyncAge=null;}
+}
+async function refreshPublic(first){
+  if(!SESSION||SESSION.role!=='public')return stopPublicSync();
+  const modalOpen=!!document.getElementById('modalRoot').firstChild;
+  try{
+    setSync('syncing');
+    const staff=await api('/staff');
+    DATA.staff=staff;
+    setSync('done');
+    if(!first && !modalOpen) renderPublic();
+  }catch(e){ const t=document.getElementById('syncText'); if(t)t.textContent='Reconnecting…'; }
 }
 async function renderPublic(){
   const v=document.getElementById('view');
@@ -1129,7 +1196,10 @@ async function renderPublic(){
     <div class="pub-banner">
       <div class="t"><h2>Request a clinic consultation</h2>
       <p>Provide your ECE Zoho email to book. Online consultations are hosted on Google Meet.</p></div>
-      <button class="btn btn-accent" onclick="logout()">Staff sign in</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost" onclick="copyBookingLink()">🔗 Copy link</button>
+        <button class="btn btn-accent" onclick="logout()">Staff sign in</button>
+      </div>
     </div>
     <div class="grid" style="grid-template-columns:1fr 1fr">
       <div class="card"><h3><span class="dot"></span>Available now</h3>
@@ -1145,8 +1215,20 @@ async function renderPublic(){
 }
 
 /* ---------- helpers ---------- */
+function copyBookingLink(){
+  const url=location.origin+location.pathname+'#book';
+  try{ navigator.clipboard.writeText(url); toast('Booking link copied'); }
+  catch(e){ toast(url); }
+}
 function sameDay(iso,d){const a=new Date(iso);return a.getFullYear()===d.getFullYear()&&a.getMonth()===d.getMonth()&&a.getDate()===d.getDate();}
 function emptyState(msg,ic='🗂'){return `<div class="empty"><div class="ic">${ic}</div>${msg}</div>`;}
+
+/* ---------- deep-link: #book opens the public booking page directly ---------- */
+window.addEventListener('DOMContentLoaded',()=>{
+  if(location.hash==='#book'){ openPublic(false); }
+});
+// also handle if the script runs after DOMContentLoaded already fired
+if(document.readyState!=='loading' && location.hash==='#book' && !SESSION){ openPublic(false); }
 </script>
 </body>
 </html>
