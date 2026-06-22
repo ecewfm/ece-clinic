@@ -6,6 +6,9 @@ write a **Google Sheet** and create **Google Meet** links via **Google Calendar*
 The official consultation form is your **Zoho Creator "Clinic Visits" form**,
 embedded in the nurse/doctor view.
 
+Authentication to Google uses **OAuth2 with a refresh token** from the clinic
+Google account — **no Workspace admin or domain-wide delegation required.**
+
 The app runs immediately in **demo mode** (built-in mock data, no backend). Wiring
 up the backend is what makes it real and persistent.
 
@@ -18,7 +21,7 @@ up the backend is what makes it real and persistent.
   Available, Consultation Ongoing, Break, Lunch), booking queue, a Google
   Calendar view, and the embedded Zoho Clinic Visits form.
 - **Employee view**: only available staff + a booking request form (with required
-  ID number). If no onsite staff is available, the form defaults to an online
+  ID number). If no onsite staff is available, it defaults to an online
   (Google Meet) consultation.
 - **Public booking page** (no login) for the same booking request.
 - **Online consultations** get an auto-generated Google Meet link.
@@ -27,158 +30,155 @@ up the backend is what makes it real and persistent.
 
 ## 1. The Google Sheet (your only datastore)
 
-Create one Google Sheet. Add **three tabs** with these exact header rows in row 1.
+Create ONE Google Sheet **using the clinic Google account** (the same account you
+will sign in with for OAuth in step 3). Add **three tabs** with these exact header
+rows in row 1.
 
 **Tab `Users`** (login accounts)
 ```
 email | password | name | role | id
 ```
 - `role` is one of: `nurse`, `doctor`, `admin`, `employee`
-- `id` should match the `id` you use in the `Staff` tab for clinical staff
-- ⚠️ Passwords are compared as plain text in `api/login.js`. Before going live,
-  switch to hashed passwords (see step 7).
+- `id` should match the `id` in the `Staff` tab for clinical staff
+- ⚠️ Passwords are plain text in `api/login.js`. Hash them before going live (§8).
 
 **Tab `Staff`** (who appears in the portal + their live status)
 ```
 id | name | role | email | status
 ```
-- `status` is one of: `available`, `notavailable`, `consultation`, `break`, `lunch`
+- `status`: `available`, `notavailable`, `consultation`, `break`, `lunch`
 - Only `nurse` and `doctor` rows show in the employee "Available now" list.
 
 **Tab `Bookings`**
 ```
 id | employee | idNumber | reason | mode | date | status | assignedTo | meet | eventId
 ```
-- Leave empty except headers; the app fills this. `mode` is `online`/`onsite`,
-  `status` is `pending`/`confirmed`/`completed`, `date` is ISO.
+- Leave empty except headers; the app fills it.
 
-> Records/consultations themselves live in **Zoho** (the Clinic Visits form), so
-> there's no separate consult tab needed unless you want one.
+> Consultation records live in **Zoho** (the Clinic Visits form), so no consult
+> tab is needed here.
 
-Copy the **Sheet ID** — it's the long string between `/d/` and `/edit` in the URL.
-
----
-
-## 2. Google Cloud: service account + APIs
-
-1. Go to <https://console.cloud.google.com> → create or pick a project.
-2. **APIs & Services → Enable APIs** → enable **Google Sheets API** and
-   **Google Calendar API**.
-3. **IAM & Admin → Service Accounts → Create service account**.
-   - Give it a name like `ece-clinic`. No roles needed. Create.
-4. Open the service account → **Keys → Add key → JSON**. A `.json` file downloads.
-   Keep it safe; never commit it.
-5. Note the service account **client_email** (looks like
-   `ece-clinic@yourproject.iam.gserviceaccount.com`).
-
-### Share the Sheet with the service account
-Open your Google Sheet → **Share** → paste the service account `client_email` →
-give **Editor** access. This lets it read/write without impersonation.
+Copy the **Sheet ID** — the long string between `/d/` and `/edit` in the URL.
 
 ---
 
-## 3. Domain-wide delegation (required for Google Meet links)
+## 2. Create an OAuth client (Google Cloud Console)
 
-A service account **cannot** create a Meet link on its own. It must impersonate a
-real Workspace user. You have Workspace, so:
+Sign in to <https://console.cloud.google.com> **as the clinic Google account**.
 
-1. In the service account details, copy its **Client ID** (a long number under
-   "Unique ID" / "OAuth 2 Client ID").
-2. Go to **Google Admin console** (<https://admin.google.com>, as a super admin)
-   → **Security → Access and data control → API controls → Domain-wide
-   delegation → Manage domain-wide delegation → Add new**.
-3. Paste the **Client ID** and these scopes (comma-separated):
+1. Create/select a project (top bar → New Project → name `ece-clinic`).
+2. **Enable APIs** — search and Enable: **Google Sheets API** and **Google
+   Calendar API**.
+3. **OAuth consent screen** (APIs & Services → OAuth consent screen):
+   - User type **Internal** if available (Workspace). Otherwise **External** and
+     add the clinic account under **Test users**.
+   - App name `ECE Clinic`, support email = yours. Save through the steps.
+4. **Credentials → + Create Credentials → OAuth client ID**:
+   - Application type: **Web application**, name `ece-clinic`
+   - **Authorized redirect URIs → Add URI**:
+     ```
+     https://developers.google.com/oauthplayground
+     ```
+   - Create. Copy the **Client ID** and **Client secret**.
+
+---
+
+## 3. Get the refresh token (browser only — OAuth Playground)
+
+No terminal needed.
+
+1. Open <https://developers.google.com/oauthplayground>.
+2. **⚙️ gear (top right)** → check **"Use your own OAuth credentials"** → paste
+   your Client ID and Client secret.
+3. In the left **"Input your own scopes"** box, paste (space-separated):
    ```
-   https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/calendar.events
+   https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar.events
    ```
-4. Save. Propagation can take a few minutes.
-5. Pick a real user the service account will act as — e.g. `clinic@yourdomain.com`.
-   That user's primary calendar will hold the consultation events (or set a
-   dedicated calendar via `CALENDAR_ID`).
+4. **Authorize APIs** → sign in as the **clinic account** → approve.
+   (If "unverified app" appears: Advanced → Go to ECE Clinic — it's your own app.)
+5. Back in the Playground, click **Exchange authorization code for tokens**.
+6. Copy the **`refresh_token`** value — that's `GOOGLE_REFRESH_TOKEN`.
+
+> If `refresh_token` is empty: revoke the app at
+> <https://myaccount.google.com/permissions> and redo 4–6. Google only returns it
+> on first authorization unless access is revoked.
+
+> Alternative (if you prefer a script): `get-refresh-token.js` is included; run
+> `npm install googleapis` then `node get-refresh-token.js`. The Playground route
+> above needs no terminal.
 
 ---
 
-## 4. Put the code on GitHub
+## 4. Put the code on GitHub (browser upload)
 
-```bash
-cd ece-clinic
-git init
-git add .
-git commit -m "ECE clinic portal"
-git branch -M main
-git remote add origin https://github.com/<you>/ece-clinic.git
-git push -u origin main
-```
-`.gitignore` already excludes `node_modules`, `.env`, and the service-account file.
+1. github.com → **+ → New repository** → name `ece-clinic` → Create empty
+   (no README/gitignore).
+2. On the repo page, click **uploading an existing file**.
+3. Drag in the **contents** of the `ece-clinic` folder (the `public/` and `api/`
+   folders, `vercel.json`, `package.json`, etc.) — not the outer folder itself.
+4. **Commit changes.**
+
+`.gitignore` excludes `node_modules`, `.env`, and any credential file. Never
+commit real secrets.
 
 ---
 
 ## 5. Deploy on Vercel
 
-1. <https://vercel.com> → **Add New → Project** → import the GitHub repo.
-2. Framework preset: **Other**. Leave build command empty; output is static +
-   serverless (handled by `vercel.json`).
-3. **Settings → Environment Variables** — add (from `.env.example`):
+1. <https://vercel.com> → **Add New → Project** → Continue with GitHub → import
+   `ece-clinic`.
+2. Framework preset **Other**; leave build command and output dir empty.
+3. Add **Environment Variables** (from `.env.example`):
    - `SHEET_ID`
-   - `GOOGLE_SERVICE_ACCOUNT_JSON` — paste the JSON. Easiest: base64-encode it
-     first (`cat service-account.json | base64 -w0`) and paste that; the code
-     handles both raw JSON and base64.
-   - `CLINIC_USER` = the impersonated user, e.g. `clinic@yourdomain.com`
-   - `CALENDAR_ID` (optional)
-4. **Deploy.**
+   - `GOOGLE_CLIENT_ID`
+   - `GOOGLE_CLIENT_SECRET`
+   - `GOOGLE_REFRESH_TOKEN`
+   - `CALENDAR_ID` (optional; blank = primary calendar)
+4. **Deploy.** If you add env vars after the first deploy, go to **Deployments →
+   ⋯ → Redeploy** so they take effect.
 
 ---
 
 ## 6. Point the frontend at your API
 
-In `public/index.html`, near the top of the main script:
-
+In `public/index.html`, find near the top of the main script:
 ```js
 const API_BASE = "";  // demo mode
 ```
-Set it to your deployment's API path:
+Set it to your deployment:
 ```js
 const API_BASE = "https://your-app.vercel.app/api";
 ```
-Commit and push — Vercel redeploys. The app now reads/writes the Sheet and creates
-Meet links instead of using mock data.
+Edit it directly on GitHub (pencil icon) → Commit. Vercel redeploys automatically.
+The app now uses the Sheet and creates Meet links instead of mock data.
 
 ---
 
-## 7. Embed your Zoho "Clinic Visits" form
+## 7. The Zoho "Clinic Visits" form
 
 The nurse/doctor view embeds your Zoho form. In `public/index.html`:
-
 ```js
 const ZOHO_FORM_URL = "https://creatorapp.zoho.com/ececonsultinggroup/ece-time-tracker/#Clinic_Visits";
 ```
-
-The link above is the **private in-app** URL — Zoho will usually block it inside an
-iframe, so the portal automatically shows an **"Open in new tab"** fallback. For a
-clean inline embed, generate a **published permalink**:
-
-1. In Zoho Creator, open the **Clinic Visits** form.
-2. **Access this application** (or the form's **⋯ → Embed / Publish**) →
-   **Permalink**.
-3. Choose access (public, or "logged-in users only").
-4. Copy the permalink URL and paste it into `ZOHO_FORM_URL`. Push.
-
-The embed passes the patient's ID as `?ID_Number=...` when launched from a booking;
-if your form's field name differs, adjust it in the `zohoEmbedHTML` function, or
-ignore it (harmless).
+This is the private in-app link — nurses/doctors are logged into Zoho, so it works
+for them. If Zoho blocks the iframe, the portal automatically shows an
+**"Open in new tab"** button. (To embed inline without a Zoho login, generate a
+published permalink and paste it here instead.)
 
 ---
 
 ## 8. Security hardening before real use
 
-- **Hash passwords.** Replace the plain comparison in `api/login.js` with a bcrypt
-  check, and store bcrypt hashes in the `Users` tab.
-- **Add sessions/tokens.** Right now the frontend trusts the login response. For
-  production, issue a signed token (e.g. JWT) from `api/login.js` and verify it in
-  the other endpoints.
-- **Restrict CORS.** `_google.js` sets `Access-Control-Allow-Origin: *` for easy
-  setup. Lock it to your Vercel domain.
-- **Rate-limit** the public `book` endpoint to prevent spam.
+- **Hash passwords** — replace the plain comparison in `api/login.js` with bcrypt;
+  store hashes in the `Users` tab.
+- **Add sessions/tokens** — issue a signed token from `api/login.js` and verify it
+  in the other endpoints.
+- **Restrict CORS** — in `_google.js`, change `Access-Control-Allow-Origin` from
+  `*` to your Vercel domain.
+- **Rate-limit** the public `book` endpoint.
+- **Protect the refresh token** — it grants access to the clinic account's Sheets
+  and Calendar. Keep it only in Vercel env vars; never in the repo. Revoke at
+  <https://myaccount.google.com/permissions> if ever exposed.
 
 ---
 
@@ -187,9 +187,9 @@ ignore it (harmless).
 ```bash
 npm install
 npm i -g vercel
-vercel dev          # serves the static page + /api functions locally
+vercel dev
 ```
-Set the same env vars in a local `.env` (gitignored) for `vercel dev`.
+Put the same env vars in a local `.env` (gitignored) for `vercel dev`.
 
 ---
 
@@ -201,7 +201,7 @@ ece-clinic/
 │  ├─ index.html        # the whole frontend (all roles, all views)
 │  └─ logo.png          # ECE logo
 ├─ api/
-│  ├─ _google.js        # shared auth + Sheets/Calendar helpers
+│  ├─ _google.js        # OAuth2 auth + Sheets/Calendar helpers
 │  ├─ login.js          # POST  validate against Users tab
 │  ├─ staff.js          # GET   staff + live status
 │  ├─ status.js         # POST  update aux status
@@ -209,6 +209,7 @@ ece-clinic/
 │  ├─ book.js           # POST  create booking (+ Meet link if online)
 │  ├─ booking-update.js # POST  confirm / assign / complete
 │  └─ calendar.js       # GET   synced Google Calendar events
+├─ get-refresh-token.js # optional one-time token helper (terminal)
 ├─ vercel.json
 ├─ package.json
 ├─ .env.example

@@ -1,49 +1,30 @@
 // api/_google.js — shared Google auth, Sheets, and Calendar helpers.
-// Uses a service account. For Google Meet link creation, the service account
-// impersonates a real Workspace user via domain-wide delegation (CLINIC_USER).
+// Uses OAuth2 with a long-lived REFRESH TOKEN from the clinic Google account.
+// No Workspace admin / domain-wide delegation needed. The account that signs in
+// once (to produce the refresh token) must own or have edit access to the Sheet.
 
 const { google } = require("googleapis");
 
 const SHEET_ID = process.env.SHEET_ID;
-const CLINIC_USER = process.env.CLINIC_USER;           // e.g. clinic@yourdomain.com
-const CALENDAR_ID = process.env.CALENDAR_ID || CLINIC_USER || "primary";
+const CALENDAR_ID = process.env.CALENDAR_ID || "primary";
 
-const SCOPES = [
-  "https://www.googleapis.com/auth/spreadsheets",
-  "https://www.googleapis.com/auth/calendar.events",
-];
+const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN;
 
-function credentials() {
-  // Service-account JSON is provided as a single env var (base64 or raw JSON).
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "";
-  const json = raw.trim().startsWith("{")
-    ? raw
-    : Buffer.from(raw, "base64").toString("utf8");
-  return JSON.parse(json);
-}
-
-// Auth WITHOUT impersonation — used for Sheets (service account owns/edits the sheet).
-function sheetsAuth() {
-  const c = credentials();
-  return new google.auth.JWT(c.client_email, null, c.private_key, SCOPES);
-}
-
-// Auth WITH impersonation — required so Calendar events get a real Meet link.
-function calendarAuth() {
-  const c = credentials();
-  return new google.auth.JWT(c.client_email, null, c.private_key, SCOPES, CLINIC_USER);
+// Build an authenticated OAuth2 client. googleapis auto-refreshes the access
+// token from the refresh token on each call, so this works indefinitely.
+function oauthClient() {
+  const c = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET);
+  c.setCredentials({ refresh_token: REFRESH_TOKEN });
+  return c;
 }
 
 async function getSheets() {
-  const auth = sheetsAuth();
-  await auth.authorize();
-  return google.sheets({ version: "v4", auth });
+  return google.sheets({ version: "v4", auth: oauthClient() });
 }
-
 async function getCalendar() {
-  const auth = calendarAuth();
-  await auth.authorize();
-  return google.calendar({ version: "v3", auth });
+  return google.calendar({ version: "v3", auth: oauthClient() });
 }
 
 // ---- Sheet helpers (each tab is a simple table with a header row) ----
@@ -103,7 +84,7 @@ async function updateRow(tab, headerOrder, keyCol, keyValue, patch) {
   return true;
 }
 
-// Create a Calendar event WITH a Google Meet link (needs delegation).
+// Create a Calendar event WITH a Google Meet link.
 async function createMeetEvent({ summary, description, startISO, endISO, attendees }) {
   const calendar = await getCalendar();
   const res = await calendar.events.insert({
