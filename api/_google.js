@@ -27,6 +27,38 @@ async function getCalendar() {
   return google.calendar({ version: "v3", auth: oauthClient() });
 }
 
+// ---- One-time setup: create any missing tabs and write/repair header rows ----
+// `spec` is { TabName: ["col1","col2",...], ... }
+async function ensureTabsAndHeaders(spec) {
+  const sheets = await getSheets();
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
+  const existing = (meta.data.sheets || []).map((s) => s.properties.title);
+
+  const report = {};
+  // 1) create missing tabs
+  const toCreate = Object.keys(spec).filter((t) => !existing.includes(t));
+  if (toCreate.length) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SHEET_ID,
+      requestBody: {
+        requests: toCreate.map((title) => ({ addSheet: { properties: { title } } })),
+      },
+    });
+  }
+  // 2) write header row for every tab (overwrites row 1 to the exact spec)
+  for (const tab of Object.keys(spec)) {
+    const headers = spec[tab];
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: `${tab}!A1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [headers] },
+    });
+    report[tab] = { created: toCreate.includes(tab), headers };
+  }
+  return report;
+}
+
 // ---- Sheet helpers (each tab is a simple table with a header row) ----
 async function readTab(tab) {
   const sheets = await getSheets();
@@ -131,6 +163,39 @@ async function listCalendarEvents(timeMinISO, timeMaxISO) {
   }));
 }
 
+// Delete a row matched by keyCol == keyValue (used to remove staff/users).
+async function deleteRowByKey(tab, keyCol, keyValue) {
+  const sheets = await getSheets();
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
+  const sheet = (meta.data.sheets || []).find((s) => s.properties.title === tab);
+  if (!sheet) return false;
+  const sheetId = sheet.properties.sheetId;
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `${tab}!A1:Z10000`,
+  });
+  const rows = res.data.values || [];
+  const head = rows[0] || [];
+  const keyIdx = head.indexOf(keyCol);
+  if (keyIdx === -1) return false;
+  let target = -1;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][keyIdx] === keyValue) { target = i; break; }
+  }
+  if (target === -1) return false;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: SHEET_ID,
+    requestBody: {
+      requests: [{
+        deleteDimension: {
+          range: { sheetId, dimension: "ROWS", startIndex: target, endIndex: target + 1 },
+        },
+      }],
+    },
+  });
+  return true;
+}
+
 function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -139,6 +204,6 @@ function cors(res) {
 
 module.exports = {
   SHEET_ID, CALENDAR_ID,
-  readTab, appendRow, updateRow,
+  readTab, appendRow, updateRow, ensureTabsAndHeaders, deleteRowByKey,
   createMeetEvent, listCalendarEvents, cors,
 };

@@ -234,6 +234,14 @@
     background:linear-gradient(135deg,var(--peach),#fff);border:2px dashed var(--orange);
     border-radius:12px;padding:16px;display:inline-block;min-width:200px}
 
+  /* online join box + readiness note */
+  .join-box{margin-top:16px;background:#eef3f1;border:1px solid var(--mist);border-radius:11px;padding:12px 14px;text-align:left}
+  .join-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--sage);margin-bottom:5px}
+  .meet-url{font-size:13px;word-break:break-all;color:var(--sage-dark);font-weight:600}
+  .ready-note{margin-top:12px;background:var(--peach);border-radius:11px;padding:12px 14px;text-align:left}
+  .ready-note b{display:block;font-size:13px;color:#9a5a25;margin-bottom:4px}
+  .ready-note span{font-size:12px;color:#8a5a30;line-height:1.55}
+
   /* in-app booking alert */
   #alertRoot{position:fixed;top:74px;right:18px;z-index:110;display:flex;flex-direction:column;gap:10px;max-width:340px}
   .alert-card{background:var(--white);border:1px solid var(--mist);border-left:4px solid var(--orange);
@@ -251,7 +259,25 @@
   .alert-x{font-size:18px;color:var(--grey-green);line-height:1}
   @media(max-width:560px){#alertRoot{left:12px;right:12px;max-width:none}}
 
-  @media(max-width:760px){.main{padding:18px 14px 50px}.cal-cell{min-height:54px}}
+  /* sync indicator */
+  .sync{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--sage);margin-left:14px;
+    background:var(--mist);padding:5px 11px;border-radius:999px}
+  .sync-dot{width:8px;height:8px;border-radius:50%;background:var(--sage);transition:background .2s}
+  .sync.syncing .sync-dot{background:var(--orange);animation:syncpulse 1s infinite}
+  .sync.syncing{color:var(--orange-deep)}
+  @keyframes syncpulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+  /* multi-select */
+  .ms-box{border:1.5px solid var(--mist);border-radius:10px;padding:8px;display:flex;flex-wrap:wrap;gap:6px;background:#fff}
+  .ms-opt{font-size:12px;font-weight:600;padding:6px 11px;border-radius:999px;border:1.5px solid var(--mist);
+    color:var(--sage-dark);background:#fff;cursor:pointer;transition:all .12s;user-select:none}
+  .ms-opt:hover{border-color:var(--grey-green)}
+  .ms-opt.on{background:var(--sage);color:#fff;border-color:var(--sage)}
+  .match-badge{background:var(--sage);color:#fff!important;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;
+    display:inline-flex;align-items:center;gap:4px;white-space:nowrap;vertical-align:middle;letter-spacing:.01em}
+  .book-row.match{border-left:3px solid var(--sage);padding-left:11px;background:#f3f7f5}
+
+  @media(max-width:760px){.main{padding:18px 14px 50px}.cal-cell{min-height:54px}.sync{display:none}}
 </style>
 </head>
 <body>
@@ -293,6 +319,7 @@
 <div id="app" class="hidden">
   <header class="topbar">
     <img id="topLogo" alt="ECE" />
+    <div id="syncIndicator" class="sync hidden"><span class="sync-dot"></span><span id="syncText">Updated just now</span></div>
     <div class="spacer"></div>
     <div class="who">
       <div class="meta" style="text-align:right">
@@ -316,11 +343,20 @@ document.getElementById('loginLogo').src=LOGO;
 document.getElementById('topLogo').src=LOGO;
 
 /* ============================================================
-   CONFIG — point this at your Vercel API when deployed.
-   While empty, the app runs on built-in mock data so you can
-   click through every screen immediately.
+   CONFIG — API base is auto-detected:
+   • On a real deployment (e.g. *.vercel.app), it uses "/api" on
+     the same domain, so live data works with no manual edit.
+   • On localhost or a file:// preview, it stays empty and the app
+     runs on built-in mock data so you can click through offline.
+   To force a specific backend, just hard-code API_BASE below.
    ============================================================ */
-const API_BASE = "https://ece-clinic.vercel.app/api"; // e.g. "https://your-app.vercel.app/api"
+const API_BASE = (function(){
+  try{
+    const h = location.hostname;
+    const isLocal = h === "localhost" || h === "127.0.0.1" || location.protocol === "file:";
+    return isLocal ? "" : "/api";
+  }catch(e){ return ""; }
+})();
 
 /* ============================================================
    ZOHO CREATOR — official Clinic Visits form (nurse/doctor).
@@ -348,14 +384,30 @@ function statusBadge(s){return `<span class="badge ${s}"><i style="background:${
 const SITES = ["Manila","Dumaguete","Honduras"];
 const BUILDINGS = ["Noel","Macias","Consuelo","Robinsons Summit","WFH"];
 
+/* parse a comma-separated list field into an array */
+function parseList(v){ return (v||"").split(",").map(s=>s.trim()).filter(Boolean); }
+/* does a staff member match a booking's site AND building? */
+function staffMatchesBooking(staff,b){
+  const ss=parseList(staff.site), sb=parseList(staff.building);
+  const okSite = !b.site || ss.includes(b.site);
+  const okBldg = !b.building || sb.includes(b.building);
+  return okSite && okBldg;
+}
+/* does the CURRENT logged-in staff member match this booking? */
+function meMatches(b,staffList){
+  const me=(staffList||[]).find(s=>s.id===SESSION.id);
+  if(!me)return false;
+  return staffMatchesBooking(me,b);
+}
+
 /* ---------- MOCK DATA (used until API_BASE is set) ---------- */
 let MOCK = {
   staff:[
-    {id:"u1",name:"Maria Santos",role:"nurse",email:"nurse@ece.com",status:"available",site:"Manila",building:"Noel",lastIdleAt:isoIn(0,8,0)},
+    {id:"u1",name:"Maria Santos",role:"nurse",email:"nurse@ece.com",status:"available",site:"Manila,Dumaguete",building:"Noel,Macias",lastIdleAt:isoIn(0,8,0)},
     {id:"u2",name:"Jenny Cruz",role:"nurse",email:"jenny@ece.com",status:"consultation",site:"Manila",building:"Macias",lastIdleAt:isoIn(0,9,0)},
     {id:"u3",name:"Dr. Allan Reyes",role:"doctor",email:"doctor@ece.com",status:"available",site:"Dumaguete",building:"Consuelo",lastIdleAt:isoIn(0,7,30)},
     {id:"u4",name:"Dr. Lia Tan",role:"doctor",email:"lia@ece.com",status:"lunch",site:"Honduras",building:"WFH",lastIdleAt:isoIn(0,11,0)},
-    {id:"u5",name:"Paolo Lim",role:"nurse",email:"paolo@ece.com",status:"available",site:"Manila",building:"Robinsons Summit",lastIdleAt:isoIn(0,6,0)},
+    {id:"u5",name:"Paolo Lim",role:"nurse",email:"paolo@ece.com",status:"available",site:"Manila",building:"Robinsons Summit,Noel",lastIdleAt:isoIn(0,6,0)},
   ],
   bookings:[
     {id:"b1",trackingId:"TRK-1042",employee:"Carlo Mendoza",zohoEmail:"carlo@ececontactcenters.com",reason:"Headache & fever",mode:"online",
@@ -413,11 +465,12 @@ async function doLogin(){
   document.getElementById('app').classList.remove('hidden');
   paintShell();startQueueWatch();render();
 }
-function logout(){SESSION=null;stopQueueWatch();document.getElementById('app').classList.add('hidden');
+function logout(){SESSION=null;stopQueueWatch();if(liveTimer){clearInterval(liveTimer);liveTimer=null;}document.getElementById('app').classList.add('hidden');
   document.getElementById('login').classList.remove('hidden');
   document.getElementById('loginPass').value="";}
 
 function paintShell(){
+  if(!SESSION)return;
   document.getElementById('whoName').textContent=SESSION.name;
   document.getElementById('whoRole').textContent=SESSION.role;
   document.getElementById('whoAvatar').textContent=(SESSION.name||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
@@ -450,6 +503,23 @@ function mockApi(path,opts){
       meet:body.mode==='online'?'https://meet.google.com/new-mock-link':'',createdAt:new Date().toISOString(),acceptedAt:'',consultEndAt:''};
       MOCK.bookings.unshift(b);return r(b);}
     if(path==='/booking-update'){const b=MOCK.bookings.find(x=>x.id===body.id);Object.assign(b,body);return r(b);}
+    if(path==='/staff-manage'){
+      const list=v=>Array.isArray(v)?v.join(','):(v||'');
+      if(body.action==='create'){
+        const id='u'+Date.now();
+        MOCK.staff.push({id,name:body.name,role:body.role,email:body.email,status:'notavailable',
+          site:list(body.site),building:list(body.building),lastIdleAt:''});
+        return r({ok:true,id});
+      }
+      if(body.action==='update'){
+        const s=MOCK.staff.find(x=>x.id===body.id);
+        if(s){if(body.name!=null)s.name=body.name;if(body.role!=null)s.role=body.role;
+          if(body.email!=null)s.email=body.email;if(body.site!=null)s.site=list(body.site);
+          if(body.building!=null)s.building=list(body.building);}
+        return r({ok:true,id:body.id});
+      }
+      if(body.action==='delete'){MOCK.staff=MOCK.staff.filter(x=>x.id!==body.id);return r({ok:true});}
+    }
     r({ok:true});
   },150));
 }
@@ -459,10 +529,11 @@ function mockApi(path,opts){
    ============================================================ */
 let TAB='dashboard';
 async function render(){
+  if(!SESSION)return;
   const v=document.getElementById('view');
   if(SESSION.role==='employee'){await renderEmployee(v);return;}
   const tabs=SESSION.role==='admin'
-    ? [['dashboard','Dashboard'],['queue','Booking Queue'],['calendar','Calendar'],['staff','Staff'],['reports','Reports'],['settings','Settings']]
+    ? [['dashboard','Dashboard'],['queue','Booking Queue'],['calendar','Calendar'],['staff','Staff'],['users','User Management'],['reports','Reports'],['settings','Settings']]
     : [['dashboard','My Status'],['queue','Booking Queue'],['calendar','Calendar'],['reports','Reports']];
   v.innerHTML=`
     <div class="pagehead">
@@ -481,16 +552,21 @@ async function renderTab(){
   if(TAB==='queue')return renderQueue(el);
   if(TAB==='calendar')return renderCalendar(el);
   if(TAB==='staff')return renderStaffAdmin(el);
+  if(TAB==='users')return renderUsers(el);
   if(TAB==='reports')return renderReports(el);
   if(TAB==='settings')return renderSettings(el);
 }
 
 /* ---------- DASHBOARD (status + auxes + Zoho button) ---------- */
 async function renderDashboard(el){
+  if(!SESSION)return;
+  const S=SESSION; // snapshot so a sign-out mid-await can't null it
   const staff=await api('/staff');
-  const me=staff.find(s=>s.id===SESSION.id)||{status:'notavailable',name:SESSION.name};
+  if(!SESSION)return;
+  const me=staff.find(s=>s.id===S.id)||{status:'notavailable',name:S.name};
   const bookings=await api('/bookings');
-  const myToday=bookings.filter(b=>sameDay(b.date,new Date())&&(b.assignedTo===SESSION.name||b.status==='pending'));
+  if(!SESSION)return;
+  const myToday=bookings.filter(b=>sameDay(b.date,new Date())&&(b.assignedTo===S.name||b.status==='pending'));
   const cur=STATUSES[me.status]||STATUSES.notavailable;
   el.innerHTML=`
    <div class="grid" style="grid-template-columns:1.3fr .9fr">
@@ -548,9 +624,29 @@ function handlingMs(b){ // accepted until consult end
 /* ---------- BOOKING QUEUE ---------- */
 let liveTimer=null;
 async function renderQueue(el){
-  const bookings=await api('/bookings');
-  const pending=bookings.filter(b=>b.status==='pending');
+  const [bookings,staff,settings]=await Promise.all([api('/bookings'),api('/staff'),api('/settings')]);
+  const routing=(settings&&settings.routing)||'longest_idle';
+  let pending=bookings.filter(b=>b.status==='pending');
   const confirmed=bookings.filter(b=>b.status==='confirmed');
+  const isStaff = SESSION.role==='nurse'||SESSION.role==='doctor';
+
+  // Routing-aware ordering of the pending list.
+  if(routing==='site_building' && isStaff){
+    // matching-to-me first, then oldest waiting first
+    pending=pending.slice().sort((a,b)=>{
+      const ma=meMatches(a,staff)?0:1, mb=meMatches(b,staff)?0:1;
+      if(ma!==mb)return ma-mb;
+      return new Date(a.createdAt||0)-new Date(b.createdAt||0);
+    });
+  }else{
+    // longest_idle (or admin view): oldest waiting first
+    pending=pending.slice().sort((a,b)=>new Date(a.createdAt||0)-new Date(b.createdAt||0));
+  }
+
+  const routeLabel = routing==='site_building'
+    ? 'Routing: by Site &amp; Building — bookings matching you are floated to the top.'
+    : 'Routing: Longest Idle — oldest-waiting requests first.';
+
   el.innerHTML=`
     <div class="stat-tiles">
       <div class="tile accent"><div class="n">${pending.length}</div><div class="l">Pending requests</div></div>
@@ -558,10 +654,10 @@ async function renderQueue(el){
       <div class="tile"><div class="n">${bookings.filter(b=>b.mode==='online').length}</div><div class="l">Online consults</div></div>
     </div>
     <div class="card"><h3><span class="dot"></span>Pending — needs action</h3>
-      ${pending.length?pending.map(b=>bookingRowHTML(b,true)).join(''):emptyState('No pending requests','📭')}</div>
+      <p style="font-size:11.5px;color:var(--grey-green);margin-top:-8px;margin-bottom:12px">${routeLabel}</p>
+      ${pending.length?pending.map(b=>bookingRowHTML(b,true,staff)).join(''):emptyState('No pending requests','📭')}</div>
     <div class="card" style="margin-top:18px"><h3><span class="dot"></span>Confirmed bookings</h3>
-      ${confirmed.length?confirmed.map(b=>bookingRowHTML(b,true)).join(''):emptyState('Nothing confirmed yet')}</div>`;
-  // live-update the waiting timers every second
+      ${confirmed.length?confirmed.map(b=>bookingRowHTML(b,true,staff)).join(''):emptyState('Nothing confirmed yet')}</div>`;
   if(liveTimer)clearInterval(liveTimer);
   liveTimer=setInterval(()=>{
     document.querySelectorAll('[data-wait]').forEach(elx=>{
@@ -570,14 +666,16 @@ async function renderQueue(el){
     });
   },1000);
 }
-function bookingRowHTML(b,actions){
+function bookingRowHTML(b,actions,staff){
   const dt=new Date(b.date);
+  const isStaff = SESSION.role==='nurse'||SESSION.role==='doctor';
+  const mine = isStaff && b.status==='pending' && meMatches(b, staff||DATA.staff);
   const waitLabel = b.status==='pending'
     ? `<span class="wait-pill">⏱ waiting <b data-wait="${b.createdAt}">${fmtDur(waitingMs(b))}</b></span>`
     : (b.acceptedAt?`<span class="wait-pill done">waited ${fmtDur(waitingMs(b))}</span>`:'');
-  return `<div class="book-row">
+  return `<div class="book-row ${mine?'match':''}">
     <div class="b-main">
-      <b>${b.employee} &nbsp;<span class="badge ${b.status}">${b.status}</span></b>
+      <b>${b.employee} &nbsp;<span class="badge ${b.status}">${b.status}</span> ${mine?'<span class="match-badge">★ matches you</span>':''}</b>
       <span>${b.trackingId?`<b>${b.trackingId}</b> · `:''}${b.zohoEmail||''} · ${b.reason}</span>
       <span class="meta-tags">${siteTag(b.site)} ${b.building?`<span class="chip">🏢 ${b.building}</span>`:''} <span class="chip">${b.mode==='online'?'🖥 Online':'🏥 Onsite'}</span> ${b.assignedTo?`<span class="chip">👤 ${b.assignedTo}</span>`:''}</span>
     </div>
@@ -676,9 +774,95 @@ async function renderStaffAdmin(el){
     ${staff.map(s=>`<div class="nurse-row">
       <div class="avatar">${(s.name||'?').split(' ').map(w=>w[0]).slice(0,2).join('')}</div>
       <div class="info"><b>${s.name}</b><span>${s.role} · ${s.email}</span>
-        <span class="meta-tags">${siteTag(s.site)} ${s.building?`<span class="chip">🏢 ${s.building}</span>`:''}</span></div>
+        <span class="meta-tags">${parseList(s.site).map(x=>`<span class="chip site">📍 ${x}</span>`).join('')} ${parseList(s.building).map(x=>`<span class="chip">🏢 ${x}</span>`).join('')}</span></div>
       ${statusBadge(s.status)}
     </div>`).join('')}</div>`;
+}
+
+/* ---------- USER MANAGEMENT (admin: add/edit/remove staff) ---------- */
+let msState={site:[],building:[]};
+async function renderUsers(el){
+  const staff=await api('/staff');
+  el.innerHTML=`
+    <div class="pagehead" style="margin-bottom:14px"><div>
+      <h1 style="font-size:19px">User management</h1>
+      <p>Add clinical staff, assign sites and buildings (multi-select). These drive queue routing.</p>
+    </div>
+    <button class="btn btn-accent" onclick="openStaffForm()">+ Add staff</button></div>
+    <div class="card"><h3><span class="dot"></span>Staff accounts</h3>
+      ${staff.length?staff.map(s=>`<div class="nurse-row">
+        <div class="avatar">${(s.name||'?').split(' ').map(w=>w[0]).slice(0,2).join('')}</div>
+        <div class="info"><b>${s.name}</b><span>${s.role} · ${s.email}</span>
+          <span class="meta-tags">${parseList(s.site).map(x=>`<span class="chip site">📍 ${x}</span>`).join('')} ${parseList(s.building).map(x=>`<span class="chip">🏢 ${x}</span>`).join('')}</span></div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost" style="padding:6px 11px" onclick='openStaffForm(${JSON.stringify(s).replace(/'/g,"&#39;")})'>Edit</button>
+          <button class="btn btn-ghost" style="padding:6px 11px;color:var(--busy)" onclick="removeStaff('${s.id}','${(s.name||'').replace(/'/g,"")}')">Remove</button>
+        </div>
+      </div>`).join(''):emptyState('No staff yet — add your first one')}
+    </div>`;
+}
+function msWidget(label,opts,selected,key){
+  return `<div class="field"><label>${label}</label>
+    <div class="ms-box" id="ms_${key}">
+      ${opts.map(o=>`<span class="ms-opt ${selected.includes(o)?'on':''}" data-k="${key}" data-v="${o}" onclick="msToggle('${key}','${o}')">${o}</span>`).join('')}
+    </div></div>`;
+}
+function msToggle(key,val){
+  const arr=msState[key];
+  const i=arr.indexOf(val);
+  if(i>=0)arr.splice(i,1);else arr.push(val);
+  const box=document.getElementById('ms_'+key);
+  if(box){const opt=box.querySelector(`[data-v="${CSS.escape(val)}"]`);if(opt)opt.classList.toggle('on');}
+}
+function openStaffForm(existing){
+  const ed=existing&&existing.id?existing:null;
+  msState={site:ed?parseList(ed.site):[],building:ed?parseList(ed.building):[]};
+  modal(`<div class="modal" style="width:min(520px,96vw)">
+    <div class="modal-h"><h3>${ed?'Edit staff':'Add staff'}</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="modal-b">
+      <input type="hidden" id="sf_id" value="${ed?ed.id:''}"/>
+      <div class="field"><label>Full name <span class="req">*</span></label><input id="sf_name" value="${ed?ed.name||'':''}"/></div>
+      <div class="field"><label>Email <span class="req">*</span></label><input id="sf_email" type="email" value="${ed?ed.email||'':''}"/></div>
+      <div class="row2">
+        <div class="field"><label>Role <span class="req">*</span></label>
+          <select id="sf_role">
+            <option value="nurse" ${ed&&ed.role==='nurse'?'selected':''}>Nurse</option>
+            <option value="doctor" ${ed&&ed.role==='doctor'?'selected':''}>Doctor</option>
+            <option value="admin" ${ed&&ed.role==='admin'?'selected':''}>Admin</option>
+            <option value="employee" ${ed&&ed.role==='employee'?'selected':''}>Employee</option>
+          </select></div>
+        <div class="field"><label>Password ${ed?'(leave blank to keep)':'<span class="req">*</span>'}</label><input id="sf_pass" type="text" placeholder="${ed?'unchanged':'set a password'}"/></div>
+      </div>
+      ${msWidget('Sites (select one or more)',SITES,msState.site,'site')}
+      ${msWidget('Buildings (select one or more)',BUILDINGS,msState.building,'building')}
+    </div>
+    <div class="modal-f">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-accent" onclick="saveStaff()">${ed?'Save changes':'Add staff'}</button>
+    </div></div>`);
+}
+async function saveStaff(){
+  const g=id=>{const e=document.getElementById(id);return e?e.value.trim():'';};
+  const id=g('sf_id'),name=g('sf_name'),email=g('sf_email'),role=g('sf_role'),pass=g('sf_pass');
+  if(!name||!email||!role){toast('Name, email and role are required');return;}
+  if(!id&&!pass){toast('Set a password for the new staff member');return;}
+  const payload=id
+    ? {action:'update',id,name,email,role,site:msState.site,building:msState.building,...(pass?{password:pass}:{})}
+    : {action:'create',name,email,role,password:pass,site:msState.site,building:msState.building};
+  await api('/staff-manage',{method:'POST',body:JSON.stringify(payload)});
+  toast(id?'Staff updated':'Staff added');closeModal();renderTab();
+}
+async function removeStaff(id,name){
+  modal(`<div class="modal" style="width:min(400px,94vw)">
+    <div class="modal-h"><h3>Remove staff</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="modal-b"><p style="font-size:13.5px">Remove <b>${name||'this staff member'}</b>? This deletes their login and staff record. Past bookings are kept.</p></div>
+    <div class="modal-f"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-accent" style="background:var(--busy);color:#fff" onclick="doRemoveStaff('${id}')">Remove</button></div>
+  </div>`);
+}
+async function doRemoveStaff(id){
+  await api('/staff-manage',{method:'POST',body:JSON.stringify({action:'delete',id})});
+  toast('Staff removed');closeModal();renderTab();
 }
 
 /* ---------- REPORTS (replaces records) ---------- */
@@ -741,41 +925,72 @@ async function setRouting(mode){
   toast('Queue routing updated');renderTab();
 }
 
-/* ---------- NEW-BOOKING ALERT (in-app banner + sound) ---------- */
-let queueWatch=null, lastSeenIds=null;
+/* ---------- NEAR-REAL-TIME POLL + SYNC INDICATOR + alerts ---------- */
+const POLL_MS=10000;
+let queueWatch=null, lastSeenIds=null, lastDataSig=null, syncAgeTimer=null, lastSyncAt=null;
+let DATA={staff:[],bookings:[]}; // shared cache the render functions can read
+
+function setSync(state){ // state: 'syncing' | 'done'
+  const el=document.getElementById('syncIndicator'); if(!el)return;
+  el.classList.remove('hidden');
+  const t=document.getElementById('syncText');
+  if(state==='syncing'){ el.classList.add('syncing'); if(t)t.textContent='Syncing…'; }
+  else{ el.classList.remove('syncing'); lastSyncAt=Date.now(); updateSyncAge(); }
+}
+function updateSyncAge(){
+  const t=document.getElementById('syncText'); if(!t||!lastSyncAt)return;
+  const s=Math.floor((Date.now()-lastSyncAt)/1000);
+  t.textContent = s<5?'Updated just now':`Updated ${s<60?s+'s':Math.floor(s/60)+'m'} ago`;
+}
 function startQueueWatch(){
-  if(!SESSION||SESSION.role==='employee'||SESSION.role==='public')return;
+  if(!SESSION||SESSION.role==='public')return;
   stopQueueWatch();
-  queueWatch=setInterval(checkNewBookings,8000);
-  checkNewBookings(true);
+  queueWatch=setInterval(poll,POLL_MS);
+  syncAgeTimer=setInterval(updateSyncAge,1000);
+  poll(true);
 }
-function stopQueueWatch(){ if(queueWatch){clearInterval(queueWatch);queueWatch=null;} lastSeenIds=null; }
-async function checkNewBookings(silent){
+function stopQueueWatch(){
+  if(queueWatch){clearInterval(queueWatch);queueWatch=null;}
+  if(syncAgeTimer){clearInterval(syncAgeTimer);syncAgeTimer=null;}
+  lastSeenIds=null;lastDataSig=null;lastSyncAt=null;
+  const el=document.getElementById('syncIndicator'); if(el)el.classList.add('hidden');
+}
+async function poll(first){
+  if(!SESSION || SESSION.role==='public'){ return; }
+  // don't disrupt the user mid-action: skip the re-render if a modal is open
+  const modalOpen = !!document.getElementById('modalRoot').firstChild;
   try{
-    const staff=await api('/staff');
+    setSync('syncing');
+    const [staff,bookings]=await Promise.all([api('/staff'),api('/bookings')]);
+    DATA.staff=staff;DATA.bookings=bookings;
+    setSync('done');
+    // booking alerts (available staff / admin only)
     const me=staff.find(s=>s.id===SESSION.id);
-    // only alert staff who are Available
     const amAvailable = me ? me.status==='available' : (SESSION.role==='admin');
-    const bookings=await api('/bookings');
     const pendingIds=bookings.filter(b=>b.status==='pending').map(b=>b.id);
-    if(lastSeenIds===null){ lastSeenIds=new Set(pendingIds); return; }
-    const fresh=pendingIds.filter(id=>!lastSeenIds.has(id));
+    if(lastSeenIds!==null && amAvailable){
+      bookings.filter(b=>b.status==='pending'&&!lastSeenIds.has(b.id)).forEach(b=>showBookingAlert(b,staff));
+    }
     lastSeenIds=new Set(pendingIds);
-    if(silent||!amAvailable)return;
-    fresh.forEach(id=>{
-      const b=bookings.find(x=>x.id===id);
-      if(b)showBookingAlert(b);
-    });
-  }catch(e){/* ignore poll errors */}
+    // re-render current tab only if the data actually changed and nothing is open
+    const sig=JSON.stringify(bookings.map(b=>[b.id,b.status,b.assignedTo]))+'|'+JSON.stringify(staff.map(s=>[s.id,s.status]));
+    if(!first && !modalOpen && sig!==lastDataSig && SESSION.role!=='public'){
+      if(SESSION.role==='employee')renderEmployee(document.getElementById('view'));
+      else renderTab();
+    }
+    lastDataSig=sig;
+  }catch(e){ const t=document.getElementById('syncText'); if(t)t.textContent='Reconnecting…'; }
 }
-function showBookingAlert(b){
+async function checkNewBookings(){ return poll(false); }
+function showBookingAlert(b,staffList){
   beep();
+  const mine = meMatches(b, staffList||DATA.staff);
   const div=document.createElement('div');
   div.className='alert-card';
   div.innerHTML=`
     <div class="alert-ic">🔔</div>
     <div class="alert-body">
-      <b>New booking request</b>
+      <b>New booking request ${mine?'<span class="match-badge">★ matches you</span>':''}</b>
       <div class="alert-tags">${siteTag(b.site)} <span class="chip">${b.mode==='online'?'🖥 Online':'🏥 Onsite'}</span> ${b.building?`<span class="chip">🏢 ${b.building}</span>`:''}</div>
       <span class="alert-sub">${b.employee} · ${b.reason}${b.trackingId?` · ${b.trackingId}`:''}</span>
     </div>
@@ -805,6 +1020,7 @@ function beep(){
 
 /* ---------- EMPLOYEE VIEW ---------- */
 async function renderEmployee(v){
+  if(!SESSION)return;
   const staff=await api('/staff');
   const available=staff.filter(s=>(s.role==='nurse'||s.role==='doctor')&&s.status==='available');
   const onsitePresent=available.length>0;
@@ -852,18 +1068,42 @@ async function submitBooking(){
   const p=id=>{const e=document.getElementById(id);return e?e.value.trim():'';};
   if(!p('bk_name')||!p('bk_email')||!p('bk_reason')||!p('bk_site')||!p('bk_building')||!p('bk_date')||!p('bk_time')){toast('Please complete all required fields');return;}
   const date=new Date(p('bk_date')+'T'+p('bk_time')).toISOString();
+  const mode=p('bk_mode');
   const res=await api('/book',{method:'POST',body:JSON.stringify({
     employee:p('bk_name'),zohoEmail:p('bk_email'),reason:p('bk_reason'),
-    site:p('bk_site'),building:p('bk_building'),date,mode:p('bk_mode')})});
+    site:p('bk_site'),building:p('bk_building'),date,mode})});
   const trk=res&&res.trackingId?res.trackingId:'(pending)';
-  modal(`<div class="modal" style="width:min(440px,94vw)"><div class="modal-h"><h3>Request received</h3><button class="x" onclick="closeModal()">×</button></div>
+  const meet=res&&res.meet?res.meet:'';
+
+  // online: show Meet link + camera/mic readiness. onsite: go-to-clinic note.
+  const onlineBlock = `
+      ${meet?`
+        <div class="join-box">
+          <div class="join-label">Your Google Meet link</div>
+          <a class="meet-url" href="${meet}" target="_blank" rel="noopener">${meet}</a>
+        </div>
+        <div class="ready-note">
+          <b>📷 Camera and microphone are required.</b>
+          <span>Before joining, make sure your camera and mic are turned on and allowed in your browser, and find a quiet, well-lit spot. Join when you're ready — a nurse or doctor will admit you.</span>
+        </div>
+        <a class="btn btn-primary btn-block" style="margin-top:12px" href="${meet}" target="_blank" rel="noopener">🎥 Join Google Meet when ready</a>
+      `:`
+        <p style="font-size:12px;color:var(--grey-green);margin-top:12px">Your Google Meet link is being generated. If it doesn't appear here, an available nurse or doctor will share it with you once they confirm.</p>
+      `}`;
+  const onsiteBlock = `
+      <div class="ready-note">
+        <b>🏥 Onsite consultation</b>
+        <span>Please proceed to the clinic at your selected site/building at your chosen time. Bring your tracking ID.</span>
+      </div>`;
+
+  modal(`<div class="modal" style="width:min(480px,94vw)"><div class="modal-h"><h3>Request received</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="modal-b" style="text-align:center">
       <div style="font-size:40px;margin-bottom:6px">✅</div>
       <p style="font-size:13.5px;color:var(--sage);margin-bottom:14px">Your consultation request has been logged. Save your tracking ID:</p>
       <div class="trk-box">${trk}</div>
-      <p style="font-size:11.5px;color:var(--grey-green);margin-top:14px">An available nurse or doctor will be alerted. For online consultations, a Google Meet link is created once confirmed.</p>
+      ${mode==='online'?onlineBlock:onsiteBlock}
     </div>
-    <div class="modal-f"><button class="btn btn-primary" onclick="closeModal()">Done</button></div></div>`);
+    <div class="modal-f"><button class="btn ${mode==='online'?'btn-ghost':'btn-primary'}" onclick="closeModal()">Done</button></div></div>`);
   if(SESSION&&SESSION.role==='employee')renderEmployee(document.getElementById('view'));
   else if(SESSION&&SESSION.role==='public')renderPublic();
 }
