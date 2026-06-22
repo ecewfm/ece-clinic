@@ -249,20 +249,22 @@
   .ready-note span{font-size:12px;color:#8a5a30;line-height:1.55}
 
   /* in-app booking alert */
-  #alertRoot{position:fixed;top:74px;right:18px;z-index:110;display:flex;flex-direction:column;gap:10px;max-width:340px}
+  #alertRoot{position:fixed;top:74px;right:18px;z-index:110;display:flex;flex-direction:column;gap:10px;max-width:360px}
   .alert-card{background:var(--white);border:1px solid var(--mist);border-left:4px solid var(--orange);
-    border-radius:12px;box-shadow:var(--shadow-lg);padding:13px 14px;display:flex;gap:11px;align-items:flex-start;
+    border-radius:12px;box-shadow:var(--shadow-lg);padding:13px 14px;display:flex;flex-direction:column;gap:10px;
     animation:slideIn .35s cubic-bezier(.2,.8,.2,1)}
+  .alert-card.is-match{border-left-color:var(--sage);background:#f3f7f5}
   .alert-card.leaving{animation:slideOut .4s forwards}
   @keyframes slideIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:translateX(0)}}
   @keyframes slideOut{to{opacity:0;transform:translateX(30px)}}
+  .alert-top{display:flex;gap:11px;align-items:flex-start}
   .alert-ic{font-size:20px;line-height:1.2}
   .alert-body{flex:1;min-width:0}
   .alert-body b{font-size:13.5px;display:block}
   .alert-tags{display:flex;gap:4px;flex-wrap:wrap;margin:5px 0}
   .alert-sub{font-size:11.5px;color:var(--sage)}
-  .alert-actions{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
-  .alert-x{font-size:18px;color:var(--grey-green);line-height:1}
+  .alert-btnrow{display:flex;gap:8px;justify-content:flex-end;border-top:1px solid var(--mist);padding-top:9px}
+  .alert-x{font-size:18px;color:var(--grey-green);line-height:1;align-self:flex-start}
   @media(max-width:560px){#alertRoot{left:12px;right:12px;max-width:none}}
 
   /* sync indicator */
@@ -646,12 +648,12 @@ async function renderDashboard(el){
   let staff=DATA.staff, bookings=DATA.bookings;
   if(!staff||!staff.length){ staff=await api('/staff'); if(!SESSION)return; DATA.staff=staff; }
   if(!bookings){ bookings=await api('/bookings'); if(!SESSION)return; DATA.bookings=bookings; }
-  const me=staff.find(s=>s.id===S.id)||{status:'notavailable',name:S.name};
+  const me=staff.find(s=>s.id===S.id)||{status:(S.status||'notavailable'),name:S.name};
+  const myStatus=me.status||S.status||'notavailable';
   const myToday=bookings.filter(b=>sameDay(b.date,new Date())&&(b.assignedTo===S.name||b.status==='pending'));
-  const cur=STATUSES[me.status]||STATUSES.notavailable;
-  el.innerHTML=`
-   <div class="grid" style="grid-template-columns:1.3fr .9fr">
-    <div>
+  const cur=STATUSES[myStatus]||STATUSES.notavailable;
+  const isClinician = S.role==='nurse'||S.role==='doctor';
+  const availabilityCard = isClinician ? `
       <div class="card">
         <h3><span class="dot"></span>My availability</h3>
         <div class="aux-now">
@@ -660,12 +662,20 @@ async function renderDashboard(el){
         </div>
         <div class="aux-grid" id="auxGrid">
           ${Object.entries(STATUSES).map(([k,s])=>`
-            <button class="aux-btn ${s.cls} ${me.status===k?'active':''}" onclick="setStatus('${k}')">
+            <button class="aux-btn ${s.cls} ${myStatus===k?'active':''}" onclick="setStatus('${k}')">
               <span class="tag"><i style="background:${s.color}"></i>${s.label}</span>
               <span class="desc">${s.desc}</span>
             </button>`).join('')}
         </div>
-      </div>
+      </div>` : `
+      <div class="card">
+        <h3><span class="dot"></span>Administration</h3>
+        <p style="font-size:13px;color:var(--sage);margin-top:-6px">You're signed in as an admin. Use the tabs above to manage the booking queue, staff, reports, and settings. Availability status is only for nurses and doctors who take consultations.</p>
+      </div>`;
+  el.innerHTML=`
+   <div class="grid" style="grid-template-columns:1.3fr .9fr">
+    <div>
+      ${availabilityCard}
       <div class="card" style="margin-top:18px">
         <h3><span class="dot"></span>Clinic Visits — consultation form</h3>
         <p style="font-size:12.5px;color:var(--sage);margin-top:-8px;margin-bottom:14px">Open the official Zoho Creator form to log a visit. It opens in a new tab in your Zoho session.</p>
@@ -681,11 +691,15 @@ async function renderDashboard(el){
    </div>`;
 }
 async function setStatus(k){
+  // optimistic: update cache if present, and always track on the session
   const me=DATA.staff.find(s=>s.id===SESSION.id);
   if(me){me.status=k; if(k==='available')me.lastIdleAt=new Date().toISOString();}
+  SESSION.status=k; // fallback so the dashboard reflects it even if not in Staff tab
   toast('Status: '+STATUSES[k].label);
-  renderTab(); // instant from cache
-  fireAndSync('/status',{userId:SESSION.id,status:k});
+  renderTab(); // instant
+  // background write; if it fails (e.g. admin not in Staff sheet) just keep the UI state
+  api('/status',{method:'POST',body:JSON.stringify({userId:SESSION.id,status:k})})
+    .catch(()=>{ /* admin may not be in Staff tab; UI state still updated */ });
 }
 
 /* ---------- waiting / handling time helpers ---------- */
@@ -1135,27 +1149,43 @@ function isBookingFormBusy(){
     .some(id=>{const e=document.getElementById(id);return e&&e.value&&e.value.trim();});
 }
 async function checkNewBookings(){ return poll(false); }
+const SHOWN_ALERTS=new Set(); // booking ids we've already popped, so we don't stack duplicates
 function showBookingAlert(b,staffList){
+  if(SHOWN_ALERTS.has(b.id))return; // already showing/handled this one
+  SHOWN_ALERTS.add(b.id);
   beep();
   const mine = meMatches(b, staffList||DATA.staff);
   const div=document.createElement('div');
-  div.className='alert-card';
+  div.className='alert-card'+(mine?' is-match':'');
+  div.id='alert_'+b.id;
   div.innerHTML=`
-    <div class="alert-ic">🔔</div>
-    <div class="alert-body">
-      <b>New booking request ${mine?'<span class="match-badge">★ matches you</span>':''}</b>
-      <div class="alert-tags">${siteTag(b.site)} <span class="chip">${b.mode==='online'?'🖥 Online':'🏥 Onsite'}</span> ${b.building?`<span class="chip">🏢 ${b.building}</span>`:''}</div>
-      <span class="alert-sub">${b.employee} · ${b.reason}${b.trackingId?` · ${b.trackingId}`:''}</span>
+    <div class="alert-top">
+      <div class="alert-ic">🔔</div>
+      <div class="alert-body">
+        <b>New booking request ${mine?'<span class="match-badge">★ matches you</span>':''}</b>
+        <div class="alert-tags">${siteTag(b.site)} <span class="chip">${b.mode==='online'?'🖥 Online':'🏥 Onsite'}</span> ${b.building?`<span class="chip">🏢 ${b.building}</span>`:''}</div>
+        <span class="alert-sub">${b.employee} · ${b.reason}${b.trackingId?` · ${b.trackingId}`:''}</span>
+      </div>
+      <button class="alert-x" title="Dismiss" onclick="dismissAlert('${b.id}')">×</button>
     </div>
-    <div class="alert-actions">
-      <button class="btn btn-primary" style="padding:6px 12px" onclick="gotoQueueFromAlert(this)">View queue</button>
-      <button class="alert-x" onclick="this.closest('.alert-card').remove()">×</button>
+    <div class="alert-btnrow">
+      <button class="btn btn-ghost" style="padding:8px 14px" onclick="dismissAlert('${b.id}')">Dismiss</button>
+      <button class="btn btn-primary" style="padding:8px 14px" onclick="viewBookingFromAlert('${b.id}')">View booking →</button>
     </div>`;
   document.getElementById('alertRoot').appendChild(div);
-  setTimeout(()=>{div.classList.add('leaving');setTimeout(()=>div.remove(),400);},12000);
+  // NOTE: no auto-dismiss — the banner stays until the user clicks Dismiss or View.
 }
+function dismissAlert(id){
+  const el=document.getElementById('alert_'+id);
+  if(el){el.classList.add('leaving');setTimeout(()=>el.remove(),350);}
+}
+function viewBookingFromAlert(id){
+  dismissAlert(id);
+  if(SESSION&&SESSION.role!=='employee'&&SESSION.role!=='public'){TAB='queue';render();}
+}
+// kept for backward-compat with any older calls
 function gotoQueueFromAlert(btn){
-  btn.closest('.alert-card').remove();
+  const card=btn.closest('.alert-card'); if(card)card.remove();
   if(SESSION&&SESSION.role!=='employee'){TAB='queue';render();}
 }
 // tiny WebAudio beep so we don't need an audio file
