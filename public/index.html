@@ -217,6 +217,12 @@
 
   /* report table */
   .table-wrap{overflow-x:auto}
+  .rpt-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+  .rpt-filters{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;
+    background:var(--paper);border:1px solid var(--mist);border-radius:11px;padding:12px 14px}
+  .rpt-filters .ff{display:flex;flex-direction:column;gap:4px}
+  .rpt-filters .ff label{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--grey-green)}
+  .rpt-filters input,.rpt-filters select{padding:8px 10px;border:1.5px solid var(--mist);border-radius:8px;font-size:12.5px;font-family:inherit;background:#fff}
   table.rpt{width:100%;border-collapse:collapse;font-size:12.5px}
   table.rpt th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--grey-green);
     padding:8px 10px;border-bottom:2px solid var(--mist);white-space:nowrap}
@@ -1001,40 +1007,114 @@ async function doRemoveStaff(id){
 }
 
 /* ---------- REPORTS (replaces records) ---------- */
+/* ---------- REPORTS (filters + full columns + CSV) ---------- */
+let RPT_FILTER={from:'',to:'',staff:'',employee:''};
+function applyReportFilters(bookings){
+  const f=RPT_FILTER;
+  return bookings.filter(b=>{
+    if(f.from){ const d=new Date(b.date); if(d < new Date(f.from+'T00:00')) return false; }
+    if(f.to){ const d=new Date(b.date); if(d > new Date(f.to+'T23:59')) return false; }
+    if(f.staff && b.assignedTo!==f.staff) return false;
+    if(f.employee){
+      const q=f.employee.toLowerCase();
+      const hay=((b.employee||'')+' '+(b.zohoEmail||'')).toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+function setRptFilter(key,val){ RPT_FILTER[key]=val; renderTab(); }
+function clearRptFilters(){ RPT_FILTER={from:'',to:'',staff:'',employee:''}; renderTab(); }
+
 async function renderReports(el){
-  const bookings=await api('/bookings');
-  const done=bookings.filter(b=>b.status==='completed');
-  const rows=bookings.slice().sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  let bookings=DATA.bookings, staff=DATA.staff;
+  if(!bookings||!bookings.length){ bookings=await api('/bookings'); DATA.bookings=bookings; }
+  if(!staff||!staff.length){ staff=await api('/staff'); DATA.staff=staff; }
+  const clinicians=staff.filter(s=>s.role==='nurse'||s.role==='doctor');
+
+  const filtered=applyReportFilters(bookings).sort((a,b)=>new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0));
+  const done=filtered.filter(b=>b.status==='completed');
   const avgWait=done.length?done.reduce((s,b)=>s+(waitingMs(b)||0),0)/done.length:null;
   const avgHandle=done.length?done.reduce((s,b)=>s+(handlingMs(b)||0),0)/done.length:null;
+  const f=RPT_FILTER;
+  const anyFilter = f.from||f.to||f.staff||f.employee;
+
   el.innerHTML=`
     <div class="stat-tiles">
-      <div class="tile"><div class="n">${bookings.length}</div><div class="l">Total requests</div></div>
+      <div class="tile"><div class="n">${filtered.length}</div><div class="l">Requests${anyFilter?' (filtered)':''}</div></div>
       <div class="tile"><div class="n">${done.length}</div><div class="l">Completed</div></div>
       <div class="tile accent"><div class="n">${avgWait!=null?fmtDur(avgWait):'—'}</div><div class="l">Avg waiting time</div></div>
       <div class="tile"><div class="n">${avgHandle!=null?fmtDur(avgHandle):'—'}</div><div class="l">Avg handling time</div></div>
     </div>
-    <div class="card"><h3><span class="dot"></span>Consultation report</h3>
+    <div class="card">
+      <div class="rpt-bar">
+        <h3 style="margin:0"><span class="dot"></span>Consultation report</h3>
+        <button class="btn btn-accent" style="padding:8px 14px" onclick="exportReportCSV()">⬇ Export CSV</button>
+      </div>
+      <div class="rpt-filters">
+        <div class="ff"><label>From</label><input type="date" value="${f.from}" onchange="setRptFilter('from',this.value)"/></div>
+        <div class="ff"><label>To</label><input type="date" value="${f.to}" onchange="setRptFilter('to',this.value)"/></div>
+        <div class="ff"><label>Staff</label>
+          <select onchange="setRptFilter('staff',this.value)">
+            <option value="">All staff</option>
+            ${clinicians.map(s=>`<option value="${s.name}" ${f.staff===s.name?'selected':''}>${s.name}</option>`).join('')}
+          </select></div>
+        <div class="ff"><label>Employee</label><input type="text" placeholder="name or email" value="${f.employee}" oninput="RPT_FILTER.employee=this.value" onchange="setRptFilter('employee',this.value)"/></div>
+        ${anyFilter?`<button class="btn btn-ghost" style="padding:8px 12px;align-self:flex-end" onclick="clearRptFilters()">Clear</button>`:''}
+      </div>
       <div class="table-wrap"><table class="rpt">
         <thead><tr>
-          <th>Tracking ID</th><th>Employee</th><th>Site / Bldg</th><th>Type</th>
-          <th>Accepted</th><th>Waiting</th><th>Consult end</th><th>Handling</th><th>Status</th>
+          <th>Tracking ID</th><th>Employee</th><th>Zoho email</th><th>Site</th><th>Building</th>
+          <th>Type</th><th>Status</th><th>Assigned staff</th>
+          <th>Requested</th><th>Accepted</th><th>Waiting</th><th>Consult end</th><th>Handling</th><th>Meet link</th>
         </tr></thead>
         <tbody>
-        ${rows.map(b=>`<tr>
+        ${filtered.length?filtered.map(b=>`<tr>
           <td><b>${b.trackingId||'—'}</b></td>
-          <td>${b.employee}<div class="sub">${b.zohoEmail||''}</div></td>
-          <td>${b.site||'—'}<div class="sub">${b.building||''}</div></td>
+          <td>${b.employee||'—'}</td>
+          <td class="sub">${b.zohoEmail||'—'}</td>
+          <td>${b.site||'—'}</td>
+          <td>${b.building||'—'}</td>
           <td>${b.mode==='online'?'Online':'Onsite'}</td>
-          <td>${b.acceptedAt?new Date(b.acceptedAt).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—'}</td>
-          <td>${b.acceptedAt?fmtDur(waitingMs(b)):'—'}</td>
-          <td>${b.consultEndAt?new Date(b.consultEndAt).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—'}</td>
-          <td>${handlingMs(b)!=null?fmtDur(handlingMs(b)):'—'}</td>
           <td><span class="badge ${b.status}">${b.status}</span></td>
-        </tr>`).join('')}
+          <td>${b.assignedTo||'—'}</td>
+          <td>${fmtDT(b.createdAt)}</td>
+          <td>${fmtDT(b.acceptedAt)}</td>
+          <td>${b.acceptedAt?fmtDur(waitingMs(b)):'—'}</td>
+          <td>${fmtDT(b.consultEndAt)}</td>
+          <td>${handlingMs(b)!=null?fmtDur(handlingMs(b)):'—'}</td>
+          <td>${b.meet?`<a class="meet-link" href="${b.meet}" target="_blank">link</a>`:'—'}</td>
+        </tr>`).join(''):`<tr><td colspan="14" style="text-align:center;padding:24px;color:var(--grey-green)">No bookings match these filters.</td></tr>`}
         </tbody>
       </table></div>
     </div>`;
+}
+function fmtDT(iso){ if(!iso)return '—'; const d=new Date(iso); if(isNaN(d))return '—'; return d.toLocaleString([], {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); }
+
+// Build and download a CSV of the currently-filtered report rows.
+function exportReportCSV(){
+  const rows=applyReportFilters(DATA.bookings||[]).sort((a,b)=>new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0));
+  const headers=['Tracking ID','Employee','Zoho email','Site','Building','Consultation type','Status','Assigned staff',
+    'Booking date/time','Requested at','Accepted at','Waiting time','Consult end','Handling time','Meet link'];
+  const esc=v=>{ const s=(v==null?'':String(v)); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
+  const lines=[headers.join(',')];
+  rows.forEach(b=>{
+    lines.push([
+      b.trackingId||'', b.employee||'', b.zohoEmail||'', b.site||'', b.building||'',
+      b.mode==='online'?'Online':'Onsite', b.status||'', b.assignedTo||'',
+      b.date?new Date(b.date).toISOString():'', b.createdAt||'', b.acceptedAt||'',
+      b.acceptedAt?fmtDur(waitingMs(b)):'', b.consultEndAt||'',
+      handlingMs(b)!=null?fmtDur(handlingMs(b)):'', b.meet||''
+    ].map(esc).join(','));
+  });
+  const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  const stamp=new Date().toISOString().slice(0,10);
+  a.href=url; a.download=`ece-clinic-report-${stamp}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  toast('CSV exported ('+rows.length+' rows)');
 }
 
 /* ---------- SETTINGS (queue routing) ---------- */
@@ -1135,10 +1215,15 @@ async function poll(first){
       if(SESSION.role==='employee'){
         // never wipe the booking form mid-entry
         if(!isBookingFormBusy()) renderEmployee(document.getElementById('view'));
-      } else renderTab();
+      } else if(!isInputFocused()) renderTab();
     }
     lastDataSig=sig;
   }catch(e){ const t=document.getElementById('syncText'); if(t)t.textContent='Reconnecting…'; }
+}
+// true if the user is typing in any input/select (e.g. report filters) — don't re-render under them
+function isInputFocused(){
+  const ae=document.activeElement;
+  return !!(ae && (ae.tagName==='INPUT'||ae.tagName==='SELECT'||ae.tagName==='TEXTAREA'));
 }
 // true if the user is actively in the booking form (focused or has typed anything)
 function isBookingFormBusy(){
