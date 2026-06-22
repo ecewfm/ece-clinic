@@ -44,16 +44,30 @@ email | password | name | role | id
 
 **Tab `Staff`** (who appears in the portal + their live status)
 ```
-id | name | role | email | status
+id | name | role | email | status | site | building | lastIdleAt
 ```
 - `status`: `available`, `notavailable`, `consultation`, `break`, `lunch`
+- `site`: `Manila`, `Dumaguete`, or `Honduras`
+- `building`: `Noel`, `Macias`, `Consuelo`, `Robinsons Summit`, or `WFH`
+- `lastIdleAt`: leave blank; the app stamps it when staff go Available (used for Longest-Idle routing)
 - Only `nurse` and `doctor` rows show in the employee "Available now" list.
 
 **Tab `Bookings`**
 ```
-id | employee | idNumber | reason | mode | date | status | assignedTo | meet | eventId
+id | trackingId | employee | zohoEmail | reason | mode | site | building | date | status | assignedTo | meet | eventId | createdAt | acceptedAt | consultEndAt
 ```
 - Leave empty except headers; the app fills it.
+- `trackingId` is auto-generated (e.g. `TRK-4528`) and shown to the requester.
+- `zohoEmail` replaces the old ID-number field — the employee's ECE Zoho email.
+- `createdAt` / `acceptedAt` / `consultEndAt` are timestamps the app uses to compute
+  waiting time and total handling time in the Reports view.
+
+**Tab `Settings`** (optional — queue routing). Two columns:
+```
+key | value
+```
+Add one row: `routing` | `longest_idle`  (the app can change it to `site_building`
+from the Settings page). If you skip this tab, it defaults to `longest_idle`.
 
 > Consultation records live in **Zoho** (the Clinic Visits form), so no consult
 > tab is needed here.

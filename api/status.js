@@ -1,7 +1,8 @@
 // api/status.js — POST { userId, status } to update a staff member's aux status.
+// When set to "available", we stamp lastIdleAt so the queue can do Longest-Idle routing.
 const { updateRow, cors } = require("./_google");
 
-const STAFF_COLS = ["id", "name", "role", "email", "status"];
+const STAFF_COLS = ["id", "name", "role", "email", "status", "site", "building", "lastIdleAt"];
 const VALID = ["available", "notavailable", "consultation", "break", "lunch"];
 
 module.exports = async (req, res) => {
@@ -12,7 +13,9 @@ module.exports = async (req, res) => {
     const { userId, status } = req.body || {};
     if (!userId || !VALID.includes(status))
       return res.status(400).json({ error: "userId and valid status required" });
-    const ok = await updateRow("Staff", STAFF_COLS, "id", userId, { status });
+    const patch = { status };
+    if (status === "available") patch.lastIdleAt = new Date().toISOString();
+    const ok = await updateRow("Staff", STAFF_COLS, "id", userId, patch);
     if (!ok) return res.status(404).json({ error: "staff not found" });
     res.status(200).json({ ok: true });
   } catch (e) {

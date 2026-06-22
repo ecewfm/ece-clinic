@@ -1,7 +1,7 @@
 // api/booking-update.js — POST { id, ...patch } to confirm/assign/complete a booking.
 const { updateRow, cors } = require("./_google");
 
-const COLS = ["id","employee","idNumber","reason","mode","date","status","assignedTo","meet","eventId"];
+const COLS = ["id","trackingId","employee","zohoEmail","reason","mode","site","building","date","status","assignedTo","meet","eventId","createdAt","acceptedAt","consultEndAt"];
 
 module.exports = async (req, res) => {
   cors(res);
@@ -10,7 +10,6 @@ module.exports = async (req, res) => {
   try {
     const { id, ...patch } = req.body || {};
     if (!id) return res.status(400).json({ error: "id required" });
-    // only allow known columns to be patched
     const clean = {};
     for (const k of Object.keys(patch)) if (COLS.includes(k)) clean[k] = patch[k];
     const ok = await updateRow("Bookings", COLS, "id", id, clean);
