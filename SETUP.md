@@ -53,12 +53,13 @@ email | password | name | role | id
 
 **Tab `Staff`** (who appears in the portal + their live status)
 ```
-id | name | role | email | status | site | building | lastIdleAt
+id | name | role | email | status | site | building | lastIdleAt | canOnline | canOnsite
 ```
 - `status`: `available`, `notavailable`, `consultation`, `break`, `lunch`
 - `site`: `Manila`, `Dumaguete`, or `Honduras`
 - `building`: `Noel`, `Macias`, `Consuelo`, `Robinsons Summit`, or `WFH`
 - `lastIdleAt`: leave blank; the app stamps it when staff go Available (used for Longest-Idle routing)
+- `canOnline` / `canOnsite`: TRUE/FALSE — which consultation types the person accepts (set via User Management). Blank = TRUE.
 - Only `nurse` and `doctor` rows show in the employee "Available now" list.
 
 **Tab `Bookings`**
@@ -75,7 +76,7 @@ id | trackingId | employee | zohoEmail | reason | mode | site | building | date 
 ```
 key | value
 ```
-Add one row: `routing` | `longest_idle`  (the app can change it to `site_building`
+The app stores queue settings here, e.g. `routing` = `longest_idle` or `site_building`, and per-building rules like `building:WFH` = `online`. You can leave this empty
 from the Settings page). If you skip this tab, it defaults to `longest_idle`.
 
 > Consultation records live in **Zoho** (the Clinic Visits form), so no consult

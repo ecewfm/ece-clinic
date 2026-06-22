@@ -51,6 +51,12 @@
   .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:11px 18px;
     border-radius:10px;font-weight:600;font-size:14px;transition:transform .08s,box-shadow .15s,background .15s}
   .btn:active{transform:translateY(1px)}
+  .btn[disabled],.btn.busy{opacity:.6;pointer-events:none;cursor:default}
+  .btn.busy{position:relative;color:transparent!important}
+  .btn.busy::after{content:'';position:absolute;top:50%;left:50%;width:14px;height:14px;margin:-7px 0 0 -7px;
+    border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite}
+  .btn-ghost.busy::after,.btn-accent.busy::after{border:2px solid rgba(24,37,29,.3);border-top-color:var(--forest)}
+  @keyframes spin{to{transform:rotate(360deg)}}
   .btn-primary{background:var(--sage);color:#fff}
   .btn-primary:hover{background:var(--sage-dark)}
   .btn-accent{background:var(--orange);color:var(--forest)}
@@ -277,6 +283,19 @@
     display:inline-flex;align-items:center;gap:4px;white-space:nowrap;vertical-align:middle;letter-spacing:.01em}
   .book-row.match{border-left:3px solid var(--sage);padding-left:11px;background:#f3f7f5}
 
+  .chip.cap{background:#e7f0ec;color:#345c50}
+  .chk-row{display:flex;gap:18px;flex-wrap:wrap;padding-top:2px}
+  .chk{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:var(--sage-dark);cursor:pointer}
+  .chk input{width:16px;height:16px;accent-color:var(--sage);cursor:pointer}
+  .mode-hint{font-size:11px;color:var(--orange-deep);margin-top:5px;min-height:14px}
+  .rule-table{display:flex;flex-direction:column;gap:8px}
+  .rule-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--mist)}
+  .rule-row:last-child{border-bottom:none}
+  .rule-name{font-size:13.5px;font-weight:600}
+  .seg{display:inline-flex;background:var(--mist);border-radius:9px;padding:3px}
+  .seg-btn{padding:6px 13px;border-radius:7px;font-size:12.5px;font-weight:600;color:var(--sage-dark)}
+  .seg-btn.on{background:var(--white);color:var(--forest);box-shadow:var(--shadow)}
+
   @media(max-width:760px){.main{padding:18px 14px 50px}.cal-cell{min-height:54px}.sync{display:none}}
 </style>
 </head>
@@ -387,12 +406,22 @@ const BUILDINGS = ["Noel","Macias","Consuelo","Robinsons Summit","WFH"];
 
 /* parse a comma-separated list field into an array */
 function parseList(v){ return (v||"").split(",").map(s=>s.trim()).filter(Boolean); }
-/* does a staff member match a booking's site AND building? */
+/* truthy check for TRUE/FALSE sheet values (default true if blank, for back-compat) */
+function isTrue(v){ if(v===undefined||v===null||v==='')return true; const s=String(v).trim().toLowerCase(); return s==='true'||s==='yes'||s==='1'; }
+/* allowed mode for a building from settings rules: 'online' | 'onsite' | 'both' (default both) */
+function buildingMode(building){
+  const s=DATA.settings||{};
+  const v=s['building:'+building];
+  return (v==='online'||v==='onsite')?v:'both';
+}
+/* does a staff member match a booking's site AND building AND capability? */
 function staffMatchesBooking(staff,b){
   const ss=parseList(staff.site), sb=parseList(staff.building);
   const okSite = !b.site || ss.includes(b.site);
   const okBldg = !b.building || sb.includes(b.building);
-  return okSite && okBldg;
+  const okCap = b.mode==='online' ? isTrue(staff.canOnline)
+              : b.mode==='onsite' ? isTrue(staff.canOnsite) : true;
+  return okSite && okBldg && okCap;
 }
 /* does the CURRENT logged-in staff member match this booking? */
 function meMatches(b,staffList){
@@ -404,11 +433,11 @@ function meMatches(b,staffList){
 /* ---------- MOCK DATA (used until API_BASE is set) ---------- */
 let MOCK = {
   staff:[
-    {id:"u1",name:"Maria Santos",role:"nurse",email:"nurse@ece.com",status:"available",site:"Manila,Dumaguete",building:"Noel,Macias",lastIdleAt:isoIn(0,8,0)},
-    {id:"u2",name:"Jenny Cruz",role:"nurse",email:"jenny@ece.com",status:"consultation",site:"Manila",building:"Macias",lastIdleAt:isoIn(0,9,0)},
-    {id:"u3",name:"Dr. Allan Reyes",role:"doctor",email:"doctor@ece.com",status:"available",site:"Dumaguete",building:"Consuelo",lastIdleAt:isoIn(0,7,30)},
-    {id:"u4",name:"Dr. Lia Tan",role:"doctor",email:"lia@ece.com",status:"lunch",site:"Honduras",building:"WFH",lastIdleAt:isoIn(0,11,0)},
-    {id:"u5",name:"Paolo Lim",role:"nurse",email:"paolo@ece.com",status:"available",site:"Manila",building:"Robinsons Summit,Noel",lastIdleAt:isoIn(0,6,0)},
+    {id:"u1",name:"Maria Santos",role:"nurse",email:"nurse@ece.com",status:"available",site:"Manila,Dumaguete",building:"Noel,Macias",lastIdleAt:isoIn(0,8,0),canOnline:"TRUE",canOnsite:"TRUE"},
+    {id:"u2",name:"Jenny Cruz",role:"nurse",email:"jenny@ece.com",status:"consultation",site:"Manila",building:"Macias",lastIdleAt:isoIn(0,9,0),canOnline:"FALSE",canOnsite:"TRUE"},
+    {id:"u3",name:"Dr. Allan Reyes",role:"doctor",email:"doctor@ece.com",status:"available",site:"Dumaguete",building:"Consuelo",lastIdleAt:isoIn(0,7,30),canOnline:"TRUE",canOnsite:"TRUE"},
+    {id:"u4",name:"Dr. Lia Tan",role:"doctor",email:"lia@ece.com",status:"lunch",site:"Honduras",building:"WFH",lastIdleAt:isoIn(0,11,0),canOnline:"TRUE",canOnsite:"FALSE"},
+    {id:"u5",name:"Paolo Lim",role:"nurse",email:"paolo@ece.com",status:"available",site:"Manila",building:"Robinsons Summit,Noel",lastIdleAt:isoIn(0,6,0),canOnline:"TRUE",canOnsite:"TRUE"},
   ],
   bookings:[
     {id:"b1",trackingId:"TRK-1042",employee:"Carlo Mendoza",zohoEmail:"carlo@ececontactcenters.com",reason:"Headache & fever",mode:"online",
@@ -427,7 +456,7 @@ let MOCK = {
       site:"Manila",building:"Noel",date:isoIn(-1,13,0),status:"completed",assignedTo:"Maria Santos",meet:"https://meet.google.com/done-link",
       createdAt:isoIn(-1,12,40),acceptedAt:isoIn(-1,12,52),consultEndAt:isoIn(-1,13,20)},
   ],
-  settings:{ routing:"longest_idle" }, // longest_idle | site_building
+  settings:{ routing:"longest_idle", "building:WFH":"online" }, // routing + per-building mode rules
 };
 function isoIn(daysAhead,h,m){const d=new Date();d.setDate(d.getDate()+daysAhead);d.setHours(h,m,0,0);return d.toISOString();}
 
@@ -484,6 +513,17 @@ function toast(msg){const t=document.createElement('div');t.className='toast';t.
 function modal(html){document.getElementById('modalRoot').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()">${html}</div>`;}
 function closeModal(){document.getElementById('modalRoot').innerHTML="";}
 
+/* ---------- button feedback + optimistic helpers ---------- */
+// Mark the button that triggered an event as "working" (spinner + disabled).
+function busyOn(){ const b=(window.event&&window.event.target&&window.event.target.closest)?window.event.target.closest('.btn'):null; if(b)b.classList.add('busy'); return b; }
+function busyOff(b){ if(b)b.classList.remove('busy'); }
+// Fire an API call in the background; on failure, toast and force a resync.
+function fireAndSync(path,payload){
+  api(path,{method:'POST',body:JSON.stringify(payload)})
+    .then(()=>{ /* next poll will reconcile */ })
+    .catch(()=>{ toast('Sync issue — refreshing'); poll(false); });
+}
+
 /* ---------- change own password ---------- */
 function openChangePassword(){
   if(!SESSION||!SESSION.id){toast('Not signed in');return;}
@@ -500,10 +540,11 @@ function openChangePassword(){
   </div>`);
 }
 async function submitChangePassword(){
+  const btn=busyOn();
   const g=id=>{const e=document.getElementById(id);return e?e.value:'';};
   const cur=g('cp_cur'),nw=g('cp_new'),cf=g('cp_conf');
   const err=document.getElementById('cp_err');
-  const show=m=>{err.textContent=m;err.classList.remove('hidden');};
+  const show=m=>{busyOff(btn);err.textContent=m;err.classList.remove('hidden');};
   if(!cur||!nw||!cf)return show('Fill in all three fields.');
   if(nw.length<4)return show('New password must be at least 4 characters.');
   if(nw!==cf)return show('New passwords do not match.');
@@ -602,11 +643,10 @@ async function renderTab(){
 async function renderDashboard(el){
   if(!SESSION)return;
   const S=SESSION; // snapshot so a sign-out mid-await can't null it
-  const staff=await api('/staff');
-  if(!SESSION)return;
+  let staff=DATA.staff, bookings=DATA.bookings;
+  if(!staff||!staff.length){ staff=await api('/staff'); if(!SESSION)return; DATA.staff=staff; }
+  if(!bookings){ bookings=await api('/bookings'); if(!SESSION)return; DATA.bookings=bookings; }
   const me=staff.find(s=>s.id===S.id)||{status:'notavailable',name:S.name};
-  const bookings=await api('/bookings');
-  if(!SESSION)return;
   const myToday=bookings.filter(b=>sameDay(b.date,new Date())&&(b.assignedTo===S.name||b.status==='pending'));
   const cur=STATUSES[me.status]||STATUSES.notavailable;
   el.innerHTML=`
@@ -640,8 +680,13 @@ async function renderDashboard(el){
     </div>
    </div>`;
 }
-async function setStatus(k){await api('/status',{method:'POST',body:JSON.stringify({userId:SESSION.id,status:k})});
-  toast('Status: '+STATUSES[k].label);renderTab();}
+async function setStatus(k){
+  const me=DATA.staff.find(s=>s.id===SESSION.id);
+  if(me){me.status=k; if(k==='available')me.lastIdleAt=new Date().toISOString();}
+  toast('Status: '+STATUSES[k].label);
+  renderTab(); // instant from cache
+  fireAndSync('/status',{userId:SESSION.id,status:k});
+}
 
 /* ---------- waiting / handling time helpers ---------- */
 function fmtDur(ms){
@@ -665,7 +710,10 @@ function handlingMs(b){ // accepted until consult end
 /* ---------- BOOKING QUEUE ---------- */
 let liveTimer=null;
 async function renderQueue(el){
-  const [bookings,staff,settings]=await Promise.all([api('/bookings'),api('/staff'),api('/settings')]);
+  // Prefer the in-memory cache for instant optimistic updates; fall back to fetch.
+  let bookings=DATA.bookings, staff=DATA.staff, settings=DATA.settings;
+  if(!bookings||!bookings.length){ [bookings,staff]=await Promise.all([api('/bookings'),api('/staff')]); DATA.bookings=bookings; DATA.staff=staff; }
+  if(!settings){ settings=await api('/settings'); DATA.settings=settings; }
   const routing=(settings&&settings.routing)||'longest_idle';
   let pending=bookings.filter(b=>b.status==='pending');
   const confirmed=bookings.filter(b=>b.status==='confirmed');
@@ -733,16 +781,26 @@ function bookingRowHTML(b,actions,staff){
 }
 function siteTag(site){ if(!site)return ''; return `<span class="chip site">📍 ${site}</span>`; }
 
-async function confirmBooking(id){
-  const bookings=await api('/bookings');const b=bookings.find(x=>x.id===id);
-  const payload={id,status:'confirmed',assignedTo:SESSION.name,acceptedAt:new Date().toISOString()};
-  if(b.mode==='online'&&!b.meet)payload.meet='https://meet.google.com/new-mock-link';
-  await api('/booking-update',{method:'POST',body:JSON.stringify(payload)});
-  toast('Booking confirmed & assigned to you');renderTab();
+function confirmBooking(id){
+  busyOn();
+  const b=(DATA.bookings||[]).find(x=>x.id===id);
+  if(!b)return;
+  const acceptedAt=new Date().toISOString();
+  // optimistic local update
+  b.status='confirmed'; b.assignedTo=SESSION.name; b.acceptedAt=acceptedAt;
+  if(b.mode==='online'&&!b.meet)b.meet='https://meet.google.com/new-mock-link';
+  toast('Booking confirmed & assigned to you');
+  renderTab(); // instant
+  const payload={id,status:'confirmed',assignedTo:SESSION.name,acceptedAt};
+  if(b.mode==='online')payload.meet=b.meet;
+  fireAndSync('/booking-update',payload);
 }
 async function startConsult(id){
-  const bookings=await api('/bookings');const b=bookings.find(x=>x.id===id);
-  await api('/status',{method:'POST',body:JSON.stringify({userId:SESSION.id,status:'consultation'})});
+  const b=(DATA.bookings||[]).find(x=>x.id===id);
+  if(!b)return;
+  // optimistic: set my status to consultation
+  const me=DATA.staff.find(s=>s.id===SESSION.id); if(me)me.status='consultation';
+  fireAndSync('/status',{userId:SESSION.id,status:'consultation'});
   modal(`<div class="modal" style="width:min(560px,96vw)"><div class="modal-h"><h3>Consultation — ${b.employee}</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="modal-b">
       <p style="font-size:13px;color:var(--sage);line-height:1.9">
@@ -755,10 +813,16 @@ async function startConsult(id){
     </div>
     <div class="modal-f"><button class="btn btn-accent" onclick="markComplete('${b.id}')">Mark consultation complete</button></div></div>`);
 }
-async function markComplete(id){
-  await api('/booking-update',{method:'POST',body:JSON.stringify({id,status:'completed',consultEndAt:new Date().toISOString()})});
-  await api('/status',{method:'POST',body:JSON.stringify({userId:SESSION.id,status:'available'})});
-  toast('Consultation marked complete');closeModal();render();
+function markComplete(id){
+  busyOn();
+  const b=(DATA.bookings||[]).find(x=>x.id===id);
+  const consultEndAt=new Date().toISOString();
+  if(b){b.status='completed';b.consultEndAt=consultEndAt;}
+  const me=DATA.staff.find(s=>s.id===SESSION.id); if(me)me.status='available';
+  toast('Consultation marked complete');
+  closeModal(); render(); // instant
+  fireAndSync('/booking-update',{id,status:'completed',consultEndAt});
+  fireAndSync('/status',{userId:SESSION.id,status:'available'});
 }
 
 /* ---------- CALENDAR (synced view) ---------- */
@@ -834,7 +898,8 @@ async function renderUsers(el){
       ${staff.length?staff.map(s=>`<div class="nurse-row">
         <div class="avatar">${(s.name||'?').split(' ').map(w=>w[0]).slice(0,2).join('')}</div>
         <div class="info"><b>${s.name}</b><span>${s.role} · ${s.email}</span>
-          <span class="meta-tags">${parseList(s.site).map(x=>`<span class="chip site">📍 ${x}</span>`).join('')} ${parseList(s.building).map(x=>`<span class="chip">🏢 ${x}</span>`).join('')}</span></div>
+          <span class="meta-tags">${parseList(s.site).map(x=>`<span class="chip site">📍 ${x}</span>`).join('')} ${parseList(s.building).map(x=>`<span class="chip">🏢 ${x}</span>`).join('')}
+          ${isTrue(s.canOnline)?'<span class="chip cap">🖥 Online</span>':''}${isTrue(s.canOnsite)?'<span class="chip cap">🏥 Onsite</span>':''}</span></div>
         <div style="display:flex;gap:6px">
           <button class="btn btn-ghost" style="padding:6px 11px" onclick='openStaffForm(${JSON.stringify(s).replace(/'/g,"&#39;")})'>Edit</button>
           <button class="btn btn-ghost" style="padding:6px 11px;color:var(--busy)" onclick="removeStaff('${s.id}','${(s.name||'').replace(/'/g,"")}')">Remove</button>
@@ -876,6 +941,12 @@ function openStaffForm(existing){
       </div>
       ${msWidget('Sites (select one or more)',SITES,msState.site,'site')}
       ${msWidget('Buildings (select one or more)',BUILDINGS,msState.building,'building')}
+      <div class="field"><label>Consultation types this person can accept</label>
+        <div class="chk-row">
+          <label class="chk"><input type="checkbox" id="sf_online" ${(!ed||isTrue(ed.canOnline))?'checked':''}/> <span>Online (Google Meet)</span></label>
+          <label class="chk"><input type="checkbox" id="sf_onsite" ${(!ed||isTrue(ed.canOnsite))?'checked':''}/> <span>Onsite</span></label>
+        </div>
+      </div>
     </div>
     <div class="modal-f">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -883,15 +954,21 @@ function openStaffForm(existing){
     </div></div>`);
 }
 async function saveStaff(){
+  const btn=busyOn();
   const g=id=>{const e=document.getElementById(id);return e?e.value.trim():'';};
+  const chk=id=>{const e=document.getElementById(id);return e?e.checked:false;};
   const id=g('sf_id'),name=g('sf_name'),email=g('sf_email'),role=g('sf_role'),pass=g('sf_pass');
-  if(!name||!email||!role){toast('Name, email and role are required');return;}
-  if(!id&&!pass){toast('Set a password for the new staff member');return;}
+  if(!name||!email||!role){busyOff(btn);toast('Name, email and role are required');return;}
+  if(!id&&!pass){busyOff(btn);toast('Set a password for the new staff member');return;}
+  const caps={canOnline:chk('sf_online'),canOnsite:chk('sf_onsite')};
   const payload=id
-    ? {action:'update',id,name,email,role,site:msState.site,building:msState.building,...(pass?{password:pass}:{})}
-    : {action:'create',name,email,role,password:pass,site:msState.site,building:msState.building};
-  await api('/staff-manage',{method:'POST',body:JSON.stringify(payload)});
-  toast(id?'Staff updated':'Staff added');closeModal();renderTab();
+    ? {action:'update',id,name,email,role,site:msState.site,building:msState.building,...caps,...(pass?{password:pass}:{})}
+    : {action:'create',name,email,role,password:pass,site:msState.site,building:msState.building,...caps};
+  try{ await api('/staff-manage',{method:'POST',body:JSON.stringify(payload)}); }
+  catch(e){ busyOff(btn); toast('Could not save: '+(e.message||'error')); return; }
+  toast(id?'Staff updated':'Staff added');closeModal();
+  DATA.staff=null; // force fresh staff list on next render
+  poll(false); renderTab();
 }
 async function removeStaff(id,name){
   modal(`<div class="modal" style="width:min(400px,94vw)">
@@ -902,8 +979,11 @@ async function removeStaff(id,name){
   </div>`);
 }
 async function doRemoveStaff(id){
-  await api('/staff-manage',{method:'POST',body:JSON.stringify({action:'delete',id})});
-  toast('Staff removed');closeModal();renderTab();
+  const btn=busyOn();
+  try{ await api('/staff-manage',{method:'POST',body:JSON.stringify({action:'delete',id})}); }
+  catch(e){ busyOff(btn); toast('Could not remove'); return; }
+  toast('Staff removed');closeModal();
+  DATA.staff=null; poll(false); renderTab();
 }
 
 /* ---------- REPORTS (replaces records) ---------- */
@@ -945,7 +1025,7 @@ async function renderReports(el){
 
 /* ---------- SETTINGS (queue routing) ---------- */
 async function renderSettings(el){
-  const s=await api('/settings');
+  let s=DATA.settings; if(!s){ s=await api('/settings'); DATA.settings=s; }
   el.innerHTML=`
     <div class="card" style="max-width:620px">
       <h3><span class="dot"></span>Queuing system</h3>
@@ -959,11 +1039,33 @@ async function renderSettings(el){
         <div><b>By Site &amp; Building</b><span>Route to available staff matching the request's site and building first.</span></div>
       </label>
       <p style="font-size:11.5px;color:var(--grey-green);margin-top:14px">Alerts still go to all available staff; routing controls who is suggested first.</p>
+    </div>
+    <div class="card" style="max-width:620px;margin-top:18px">
+      <h3><span class="dot"></span>Consultation mode by building</h3>
+      <p style="font-size:12.5px;color:var(--sage);margin-top:-8px;margin-bottom:16px">Set which consultation types are allowed per building. The booking form defaults to this (employees can still change it).</p>
+      <div class="rule-table">
+        ${BUILDINGS.map(bld=>{
+          const cur=buildingMode(bld);
+          return `<div class="rule-row">
+            <div class="rule-name">🏢 ${bld}</div>
+            <div class="seg">
+              ${['both','online','onsite'].map(m=>`<button class="seg-btn ${cur===m?'on':''}" onclick="setBuildingMode('${bld}','${m}')">${m==='both'?'Both':m==='online'?'Online':'Onsite'}</button>`).join('')}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
     </div>`;
 }
+async function setBuildingMode(building,mode){
+  DATA.settings={...(DATA.settings||{}),['building:'+building]:mode}; // optimistic
+  toast(building+': '+(mode==='both'?'Online & Onsite':mode));
+  renderTab();
+  fireAndSync('/settings',{['building:'+building]:mode});
+}
 async function setRouting(mode){
-  await api('/settings',{method:'POST',body:JSON.stringify({routing:mode})});
+  DATA.settings={...(DATA.settings||{}),routing:mode}; // optimistic
   toast('Queue routing updated');renderTab();
+  fireAndSync('/settings',{routing:mode});
 }
 
 /* ---------- NEAR-REAL-TIME POLL + SYNC INDICATOR + alerts ---------- */
@@ -1016,11 +1118,21 @@ async function poll(first){
     // re-render current tab only if the data actually changed and nothing is open
     const sig=JSON.stringify(bookings.map(b=>[b.id,b.status,b.assignedTo]))+'|'+JSON.stringify(staff.map(s=>[s.id,s.status]));
     if(!first && !modalOpen && sig!==lastDataSig && SESSION.role!=='public'){
-      if(SESSION.role==='employee')renderEmployee(document.getElementById('view'));
-      else renderTab();
+      if(SESSION.role==='employee'){
+        // never wipe the booking form mid-entry
+        if(!isBookingFormBusy()) renderEmployee(document.getElementById('view'));
+      } else renderTab();
     }
     lastDataSig=sig;
   }catch(e){ const t=document.getElementById('syncText'); if(t)t.textContent='Reconnecting…'; }
+}
+// true if the user is actively in the booking form (focused or has typed anything)
+function isBookingFormBusy(){
+  const f=document.getElementById('bookForm'); if(!f)return false;
+  const ae=document.activeElement;
+  if(ae && f.contains(ae))return true;
+  return ['bk_name','bk_email','bk_reason','bk_date','bk_time']
+    .some(id=>{const e=document.getElementById(id);return e&&e.value&&e.value.trim();});
 }
 async function checkNewBookings(){ return poll(false); }
 function showBookingAlert(b,staffList){
@@ -1062,6 +1174,7 @@ function beep(){
 /* ---------- EMPLOYEE VIEW ---------- */
 async function renderEmployee(v){
   if(!SESSION)return;
+  if(!DATA.settings){ try{ DATA.settings=await api('/settings'); }catch(e){} }
   const staff=await api('/staff');
   const available=staff.filter(s=>(s.role==='nurse'||s.role==='doctor')&&s.status==='available');
   const onsitePresent=available.length>0;
@@ -1090,29 +1203,53 @@ function bookFormHTML(onsitePresent){
       <div class="field"><label>Site <span class="req">*</span></label>
         <select id="bk_site">${SITES.map(s=>`<option value="${s}">${s}</option>`).join('')}</select></div>
       <div class="field"><label>Building <span class="req">*</span></label>
-        <select id="bk_building">${BUILDINGS.map(b=>`<option value="${b}">${b}</option>`).join('')}</select></div>
+        <select id="bk_building" onchange="onBuildingChange()">${BUILDINGS.map(b=>`<option value="${b}">${b}</option>`).join('')}</select></div>
     </div>
     <div class="row2">
       <div class="field"><label>Preferred date <span class="req">*</span></label><input id="bk_date" type="date"/></div>
       <div class="field"><label>Time <span class="req">*</span></label><input id="bk_time" type="time"/></div>
     </div>
     <div class="field"><label>Consultation type</label>
-      <select id="bk_mode">
-        <option value="onsite" ${!onsitePresent?'disabled':''}>Onsite ${!onsitePresent?'(no staff available)':''}</option>
-        <option value="online" ${!onsitePresent?'selected':''}>Online (Google Meet)</option>
-      </select></div>
+      <select id="bk_mode">${modeOptionsHTML(BUILDINGS[0])}</select>
+      <p id="bk_modehint" class="mode-hint"></p>
+    </div>
     <button class="btn btn-accent btn-block" onclick="submitBooking()">Request consultation</button>
     <p style="font-size:11.5px;color:var(--grey-green);margin-top:10px">Online consultations generate a Google Meet link automatically once a nurse or doctor confirms.</p>
   </div>`;
 }
+// Build the consultation-type options for a given building, honoring the
+// per-building rule. The allowed mode is the DEFAULT, but other modes stay
+// selectable (per the chosen behavior) unless the rule restricts to one.
+function modeOptionsHTML(building){
+  const rule=buildingMode(building); // both | online | onsite
+  const opts=[];
+  const onlineDefault = rule!=='onsite';
+  opts.push(`<option value="online" ${onlineDefault?'selected':''}>Online (Google Meet)</option>`);
+  opts.push(`<option value="onsite" ${rule==='onsite'?'selected':''}>Onsite</option>`);
+  return opts.join('');
+}
+function onBuildingChange(){
+  const bSel=document.getElementById('bk_building'); if(!bSel)return;
+  const building=bSel.value;
+  const mSel=document.getElementById('bk_mode');
+  if(mSel) mSel.innerHTML=modeOptionsHTML(building);
+  const rule=buildingMode(building);
+  const hint=document.getElementById('bk_modehint');
+  if(hint) hint.textContent = rule==='online' ? 'This building is set to online consultations.'
+    : rule==='onsite' ? 'This building is set to onsite consultations.' : '';
+}
 async function submitBooking(){
   const p=id=>{const e=document.getElementById(id);return e?e.value.trim():'';};
   if(!p('bk_name')||!p('bk_email')||!p('bk_reason')||!p('bk_site')||!p('bk_building')||!p('bk_date')||!p('bk_time')){toast('Please complete all required fields');return;}
+  const btn=busyOn();
   const date=new Date(p('bk_date')+'T'+p('bk_time')).toISOString();
   const mode=p('bk_mode');
-  const res=await api('/book',{method:'POST',body:JSON.stringify({
-    employee:p('bk_name'),zohoEmail:p('bk_email'),reason:p('bk_reason'),
-    site:p('bk_site'),building:p('bk_building'),date,mode})});
+  let res;
+  try{
+    res=await api('/book',{method:'POST',body:JSON.stringify({
+      employee:p('bk_name'),zohoEmail:p('bk_email'),reason:p('bk_reason'),
+      site:p('bk_site'),building:p('bk_building'),date,mode})});
+  }catch(e){ busyOff(btn); toast('Could not submit request — try again'); return; }
   const trk=res&&res.trackingId?res.trackingId:'(pending)';
   const meet=res&&res.meet?res.meet:'';
 
@@ -1178,20 +1315,34 @@ function stopPublicSync(){
 }
 async function refreshPublic(first){
   if(!SESSION||SESSION.role!=='public')return stopPublicSync();
-  const modalOpen=!!document.getElementById('modalRoot').firstChild;
   try{
     setSync('syncing');
     const staff=await api('/staff');
     DATA.staff=staff;
     setSync('done');
-    if(!first && !modalOpen) renderPublic();
+    // Update ONLY the "Available now" list — never re-render the form,
+    // so typing is never interrupted or wiped.
+    if(!first) patchAvailableList(staff);
   }catch(e){ const t=document.getElementById('syncText'); if(t)t.textContent='Reconnecting…'; }
+}
+function availableListHTML(staff){
+  const available=staff.filter(s=>(s.role==='nurse'||s.role==='doctor')&&s.status==='available');
+  return available.length?available.map(s=>`<div class="nurse-row">
+      <div class="avatar">${(s.name||'?').split(' ').map(w=>w[0]).slice(0,2).join('')}</div>
+      <div class="info"><b>${s.name}</b><span style="text-transform:capitalize">${s.role}</span>
+        <span class="meta-tags">${siteTag(s.site)} ${s.building?`<span class="chip">🏢 ${s.building}</span>`:''}</span></div>
+      ${statusBadge(s.status)}</div>`).join('')
+    :`<div class="empty"><div class="ic">🌙</div>No onsite staff right now — book an online consultation.</div>`;
+}
+function patchAvailableList(staff){
+  const box=document.getElementById('availList');
+  if(box) box.innerHTML=availableListHTML(staff);
 }
 async function renderPublic(){
   const v=document.getElementById('view');
+  if(!DATA.settings){ try{ DATA.settings=await api('/settings'); }catch(e){} }
   const staff=await api('/staff');
-  const available=staff.filter(s=>(s.role==='nurse'||s.role==='doctor')&&s.status==='available');
-  const onsitePresent=available.length>0;
+  const onsitePresent=staff.filter(s=>(s.role==='nurse'||s.role==='doctor')&&s.status==='available').length>0;
   v.innerHTML=`
     <div class="pub-banner">
       <div class="t"><h2>Request a clinic consultation</h2>
@@ -1203,12 +1354,7 @@ async function renderPublic(){
     </div>
     <div class="grid" style="grid-template-columns:1fr 1fr">
       <div class="card"><h3><span class="dot"></span>Available now</h3>
-        ${available.length?available.map(s=>`<div class="nurse-row">
-          <div class="avatar">${(s.name||'?').split(' ').map(w=>w[0]).slice(0,2).join('')}</div>
-          <div class="info"><b>${s.name}</b><span style="text-transform:capitalize">${s.role}</span>
-            <span class="meta-tags">${siteTag(s.site)} ${s.building?`<span class="chip">🏢 ${s.building}</span>`:''}</span></div>
-          ${statusBadge(s.status)}</div>`).join('')
-          :`<div class="empty"><div class="ic">🌙</div>No onsite staff right now — book an online consultation.</div>`}
+        <div id="availList">${availableListHTML(staff)}</div>
       </div>
       <div class="card"><h3><span class="dot"></span>Booking request</h3>${bookFormHTML(onsitePresent)}</div>
     </div>`;

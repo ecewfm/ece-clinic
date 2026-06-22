@@ -2,7 +2,7 @@
 // When set to "available", we stamp lastIdleAt so the queue can do Longest-Idle routing.
 const { updateRow, cors } = require("./_google");
 
-const STAFF_COLS = ["id", "name", "role", "email", "status", "site", "building", "lastIdleAt"];
+const STAFF_COLS = ["id", "name", "role", "email", "status", "site", "building", "lastIdleAt", "canOnline", "canOnsite"];
 const VALID = ["available", "notavailable", "consultation", "break", "lunch"];
 
 module.exports = async (req, res) => {
