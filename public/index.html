@@ -313,6 +313,9 @@
   .chk{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:var(--sage-dark);cursor:pointer}
   .chk input{width:16px;height:16px;accent-color:var(--sage);cursor:pointer}
   .mode-hint{font-size:11px;color:var(--orange-deep);margin-top:5px;min-height:14px}
+  .locked-mode{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    border:1.5px solid var(--mist);border-radius:10px;padding:11px 13px;background:var(--paper);font-size:14px;font-weight:600;color:var(--sage-dark)}
+  .locked-mode .lock{font-size:11px;font-weight:600;color:var(--grey-green);background:var(--mist);padding:3px 9px;border-radius:999px}
   .rule-table{display:flex;flex-direction:column;gap:8px}
   .rule-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--mist)}
   .rule-row:last-child{border-bottom:none}
@@ -1167,7 +1170,7 @@ async function renderSettings(el){
     </div>
     <div class="card" style="max-width:620px;margin-top:18px">
       <h3><span class="dot"></span>Consultation mode by building</h3>
-      <p style="font-size:12.5px;color:var(--sage);margin-top:-8px;margin-bottom:16px">Set which consultation types are allowed per building. The booking form defaults to this (employees can still change it).</p>
+      <p style="font-size:12.5px;color:var(--sage);margin-top:-8px;margin-bottom:16px">Set which consultation types are allowed per building. Employees can only book the allowed type — when a building is set to Online or Onsite, the booking form locks to that type. "Both" lets the employee choose.</p>
       <div class="rule-table">
         ${BUILDINGS.map(bld=>{
           const cur=buildingMode(bld);
@@ -1356,40 +1359,49 @@ function bookFormHTML(onsitePresent){
       <div class="field"><label>Time <span class="req">*</span></label><input id="bk_time" type="time"/></div>
     </div>
     <div class="field"><label>Consultation type</label>
-      <select id="bk_mode">${modeOptionsHTML(BUILDINGS[0])}</select>
+      <div id="bk_modewrap">${modeFieldHTML(BUILDINGS[0])}</div>
       <p id="bk_modehint" class="mode-hint"></p>
     </div>
     <button class="btn btn-accent btn-block" onclick="submitBooking()">Request consultation</button>
     <p style="font-size:11.5px;color:var(--grey-green);margin-top:10px">Online consultations generate a Google Meet link automatically once a nurse or doctor confirms.</p>
   </div>`;
 }
-// Build the consultation-type options for a given building, honoring the
-// per-building rule. The allowed mode is the DEFAULT, but other modes stay
-// selectable (per the chosen behavior) unless the rule restricts to one.
-function modeOptionsHTML(building){
+// Build the consultation-type field for a building, ENFORCING the per-building rule.
+// - 'both'   → a selectable dropdown (employee chooses Online or Onsite)
+// - 'online' → locked to Online (shown, not changeable)
+// - 'onsite' → locked to Onsite (shown, not changeable)
+function modeFieldHTML(building){
   const rule=buildingMode(building); // both | online | onsite
-  const opts=[];
-  const onlineDefault = rule!=='onsite';
-  opts.push(`<option value="online" ${onlineDefault?'selected':''}>Online (Google Meet)</option>`);
-  opts.push(`<option value="onsite" ${rule==='onsite'?'selected':''}>Onsite</option>`);
-  return opts.join('');
+  if(rule==='both'){
+    return `<select id="bk_mode">
+      <option value="online" selected>Online (Google Meet)</option>
+      <option value="onsite">Onsite</option>
+    </select>`;
+  }
+  const label = rule==='online' ? 'Online (Google Meet)' : 'Onsite';
+  // hidden input carries the value to submitBooking; locked box shows it read-only
+  return `<input type="hidden" id="bk_mode" value="${rule}"/>
+    <div class="locked-mode"><span>${label}</span><span class="lock">🔒 Set by building</span></div>`;
 }
 function onBuildingChange(){
   const bSel=document.getElementById('bk_building'); if(!bSel)return;
   const building=bSel.value;
-  const mSel=document.getElementById('bk_mode');
-  if(mSel) mSel.innerHTML=modeOptionsHTML(building);
+  const wrap=document.getElementById('bk_modewrap');
+  if(wrap) wrap.innerHTML=modeFieldHTML(building);
   const rule=buildingMode(building);
   const hint=document.getElementById('bk_modehint');
-  if(hint) hint.textContent = rule==='online' ? 'This building is set to online consultations.'
-    : rule==='onsite' ? 'This building is set to onsite consultations.' : '';
+  if(hint) hint.textContent = rule==='online' ? 'This building is set to online consultations only.'
+    : rule==='onsite' ? 'This building is set to onsite consultations only.' : '';
 }
 async function submitBooking(){
   const p=id=>{const e=document.getElementById(id);return e?e.value.trim():'';};
   if(!p('bk_name')||!p('bk_email')||!p('bk_reason')||!p('bk_site')||!p('bk_building')||!p('bk_date')||!p('bk_time')){toast('Please complete all required fields');return;}
   const btn=busyOn();
   const date=new Date(p('bk_date')+'T'+p('bk_time')).toISOString();
-  const mode=p('bk_mode');
+  // Enforce the per-building rule: if the building is locked to one mode, use it.
+  const rule=buildingMode(p('bk_building'));
+  let mode=p('bk_mode');
+  if(rule==='online'||rule==='onsite') mode=rule;
   let res;
   try{
     res=await api('/book',{method:'POST',body:JSON.stringify({
