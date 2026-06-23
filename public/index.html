@@ -352,9 +352,9 @@
     </div>
     <button class="btn btn-primary btn-block" onclick="doLogin()">Sign in</button>
     <button class="btn btn-ghost btn-block" style="margin-top:9px" onclick="openPublic()">Open public booking page →</button>
-    <div class="hint">
-      Demo accounts (password: <b>demo</b>)<br/>
-      nurse@ece.com · doctor@ece.com · admin@ece.com · employee@ece.com
+    <div class="hint" id="loginHint">
+      Sign in with your ECE email and password.<br/>
+      Need access or forgot your password? Contact your administrator.
     </div>
   </div>
 </div>
@@ -402,6 +402,13 @@ const API_BASE = (function(){
     return isLocal ? "" : "/api";
   }catch(e){ return ""; }
 })();
+
+// In demo/offline mode (no live backend) show the demo accounts so the standalone
+// demo file is usable. On the live site this stays the neutral helper text.
+if(!API_BASE){
+  const h=document.getElementById('loginHint');
+  if(h) h.innerHTML='Demo mode — accounts (password: <b>demo</b>):<br/>nurse@ece.com · doctor@ece.com · admin@ece.com · employee@ece.com';
+}
 
 /* ============================================================
    ZOHO CREATOR — official Clinic Visits form (nurse/doctor).
