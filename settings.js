@@ -9,7 +9,7 @@
 const { readTab, appendRow, updateRow, deleteRowByKey, cors } = require("./_google");
 
 const USER_COLS = ["email", "password", "name", "role", "id"];
-const STAFF_COLS = ["id", "name", "role", "email", "status", "site", "building", "lastIdleAt"];
+const STAFF_COLS = ["id", "name", "role", "email", "status", "site", "building", "lastIdleAt", "canOnline", "canOnsite"];
 
 const asList = (v) => Array.isArray(v) ? v.join(",") : (v || "");
 
@@ -27,11 +27,14 @@ module.exports = async (req, res) => {
         return res.status(400).json({ error: "name, email, password and role are required" });
       const id = "u" + Date.now();
       const site = asList(body.site), building = asList(body.building);
+      const canOnline = body.canOnline ? "TRUE" : "FALSE";
+      const canOnsite = body.canOnsite ? "TRUE" : "FALSE";
       // Users row (login)
       await appendRow("Users", USER_COLS, { email, password, name, role, id });
       // Staff row (only clinical staff appear/route; admins can be staff too)
       await appendRow("Staff", STAFF_COLS, {
         id, name, role, email, status: "notavailable", site, building, lastIdleAt: "",
+        canOnline, canOnsite,
       });
       return res.status(200).json({ ok: true, id });
     }
@@ -45,6 +48,8 @@ module.exports = async (req, res) => {
       if (body.email != null) staffPatch.email = body.email;
       if (body.site != null) staffPatch.site = asList(body.site);
       if (body.building != null) staffPatch.building = asList(body.building);
+      if (body.canOnline != null) staffPatch.canOnline = body.canOnline ? "TRUE" : "FALSE";
+      if (body.canOnsite != null) staffPatch.canOnsite = body.canOnsite ? "TRUE" : "FALSE";
       await updateRow("Staff", STAFF_COLS, "id", id, staffPatch);
       // mirror name/role/email/password into Users
       const userPatch = {};

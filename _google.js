@@ -10,7 +10,7 @@ const { ensureTabsAndHeaders, cors } = require("./_google");
 
 const SPEC = {
   Users: ["email", "password", "name", "role", "id"],
-  Staff: ["id", "name", "role", "email", "status", "site", "building", "lastIdleAt"],
+  Staff: ["id", "name", "role", "email", "status", "site", "building", "lastIdleAt", "canOnline", "canOnsite"],
   Bookings: ["id", "trackingId", "employee", "zohoEmail", "reason", "mode", "site",
              "building", "date", "status", "assignedTo", "meet", "eventId",
              "createdAt", "acceptedAt", "consultEndAt"],
