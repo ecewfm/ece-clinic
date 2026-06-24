@@ -441,6 +441,8 @@ const BUILDINGS = ["Noel","Macias","Consuelo","Robinsons Summit","WFH"];
 
 /* parse a comma-separated list field into an array */
 function parseList(v){ return (v||"").split(",").map(s=>s.trim()).filter(Boolean); }
+/* roles that can take consultations (have availability, appear in queue/list). Admins included so they can cater patients. */
+function isClinicianRole(role){ return role==='nurse'||role==='doctor'||role==='admin'; }
 /* truthy check for TRUE/FALSE sheet values (default true if blank, for back-compat) */
 function isTrue(v){ if(v===undefined||v===null||v==='')return true; const s=String(v).trim().toLowerCase(); return s==='true'||s==='yes'||s==='1'; }
 /* allowed mode for a building from settings rules: 'online' | 'onsite' | 'both' (default both) */
@@ -692,7 +694,7 @@ async function renderDashboard(el){
   const myStatus=me.status||S.status||'notavailable';
   const myToday=bookings.filter(b=>sameDay(b.date,new Date())&&(b.assignedTo===S.name||b.status==='pending'));
   const cur=STATUSES[myStatus]||STATUSES.notavailable;
-  const isClinician = S.role==='nurse'||S.role==='doctor';
+  const isClinician = isClinicianRole(S.role);
   const availabilityCard = isClinician ? `
       <div class="card">
         <h3><span class="dot"></span>My availability</h3>
@@ -771,7 +773,7 @@ async function renderQueue(el){
   const routing=(settings&&settings.routing)||'longest_idle';
   let pending=bookings.filter(b=>b.status==='pending');
   const confirmed=bookings.filter(b=>b.status==='confirmed');
-  const isStaff = SESSION.role==='nurse'||SESSION.role==='doctor';
+  const isStaff = isClinicianRole(SESSION.role);
 
   // Routing-aware ordering of the pending list.
   if(routing==='site_building' && isStaff){
@@ -811,7 +813,7 @@ async function renderQueue(el){
 }
 function bookingRowHTML(b,actions,staff){
   const dt=new Date(b.date);
-  const isStaff = SESSION.role==='nurse'||SESSION.role==='doctor';
+  const isStaff = isClinicianRole(SESSION.role);
   const mine = isStaff && b.status==='pending' && meMatches(b, staff||DATA.staff);
   const waitLabel = b.status==='pending'
     ? `<span class="wait-pill">⏱ waiting <b data-wait="${b.createdAt}">${fmtDur(waitingMs(b))}</b></span>`
@@ -1064,7 +1066,7 @@ async function renderReports(el){
   let bookings=DATA.bookings, staff=DATA.staff;
   if(!bookings||!bookings.length){ bookings=await api('/bookings'); DATA.bookings=bookings; }
   if(!staff||!staff.length){ staff=await api('/staff'); DATA.staff=staff; }
-  const clinicians=staff.filter(s=>s.role==='nurse'||s.role==='doctor');
+  const clinicians=staff.filter(s=>isClinicianRole(s.role));
 
   const filtered=applyReportFilters(bookings).sort((a,b)=>new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0));
   const done=filtered.filter(b=>b.status==='completed');
@@ -1325,7 +1327,7 @@ async function renderEmployee(v){
   if(!SESSION)return;
   if(!DATA.settings){ try{ DATA.settings=await api('/settings'); }catch(e){} }
   const staff=await api('/staff');
-  const available=staff.filter(s=>(s.role==='nurse'||s.role==='doctor')&&s.status==='available');
+  const available=staff.filter(s=>(isClinicianRole(s.role))&&s.status==='available');
   const onsitePresent=available.length>0;
   v.innerHTML=`
     <div class="pagehead"><div><h1>Book a Consultation</h1>
@@ -1491,7 +1493,7 @@ async function refreshPublic(first){
   }catch(e){ const t=document.getElementById('syncText'); if(t)t.textContent='Reconnecting…'; }
 }
 function availableListHTML(staff){
-  const available=staff.filter(s=>(s.role==='nurse'||s.role==='doctor')&&s.status==='available');
+  const available=staff.filter(s=>(isClinicianRole(s.role))&&s.status==='available');
   return available.length?available.map(s=>`<div class="nurse-row">
       <div class="avatar">${(s.name||'?').split(' ').map(w=>w[0]).slice(0,2).join('')}</div>
       <div class="info"><b>${s.name}</b><span style="text-transform:capitalize">${s.role}</span>
@@ -1507,7 +1509,7 @@ async function renderPublic(){
   const v=document.getElementById('view');
   if(!DATA.settings){ try{ DATA.settings=await api('/settings'); }catch(e){} }
   const staff=await api('/staff');
-  const onsitePresent=staff.filter(s=>(s.role==='nurse'||s.role==='doctor')&&s.status==='available').length>0;
+  const onsitePresent=staff.filter(s=>(isClinicianRole(s.role))&&s.status==='available').length>0;
   v.innerHTML=`
     <div class="pub-banner">
       <div class="t"><h2>Request a clinic consultation</h2>
