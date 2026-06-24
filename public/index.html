@@ -313,6 +313,7 @@
   .chk{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:var(--sage-dark);cursor:pointer}
   .chk input{width:16px;height:16px;accent-color:var(--sage);cursor:pointer}
   .mode-hint{font-size:11px;color:var(--orange-deep);margin-top:5px;min-height:14px}
+  .slot-warn{font-size:12.5px;color:#9a5b1e;background:#fcf3e8;border:1px solid #f0d9bf;border-radius:9px;padding:9px 12px;margin:2px 0 4px;line-height:1.45}
   .locked-mode{display:flex;align-items:center;justify-content:space-between;gap:10px;
     border:1.5px solid var(--mist);border-radius:10px;padding:11px 13px;background:var(--paper);font-size:14px;font-weight:600;color:var(--sage-dark)}
   .locked-mode .lock{font-size:11px;font-weight:600;color:var(--grey-green);background:var(--mist);padding:3px 9px;border-radius:999px}
@@ -492,6 +493,13 @@ let MOCK = {
     {id:"b5",trackingId:"TRK-1039",employee:"Diego Ramos",zohoEmail:"diego@ececontactcenters.com",reason:"Cough, sore throat",mode:"online",
       site:"Manila",building:"Noel",date:isoIn(-1,13,0),status:"completed",assignedTo:"Maria Santos",meet:"https://meet.google.com/done-link",
       createdAt:isoIn(-1,12,40),acceptedAt:isoIn(-1,12,52),consultEndAt:isoIn(-1,13,20)},
+    // three at the same slot (tomorrow) to demonstrate the busy-slot warning
+    {id:"b6",trackingId:"TRK-1050",employee:"Demo One",zohoEmail:"one@ececontactcenters.com",reason:"Checkup",mode:"online",
+      site:"Manila",building:"Noel",date:isoIn(1,15,0),status:"pending",assignedTo:"",meet:"",createdAt:isoIn(1,14,30),acceptedAt:"",consultEndAt:""},
+    {id:"b7",trackingId:"TRK-1051",employee:"Demo Two",zohoEmail:"two@ececontactcenters.com",reason:"Checkup",mode:"onsite",
+      site:"Dumaguete",building:"Consuelo",date:isoIn(1,15,0),status:"pending",assignedTo:"",meet:"",createdAt:isoIn(1,14,31),acceptedAt:"",consultEndAt:""},
+    {id:"b8",trackingId:"TRK-1052",employee:"Demo Three",zohoEmail:"three@ececontactcenters.com",reason:"Checkup",mode:"online",
+      site:"Honduras",building:"WFH",date:isoIn(1,15,0),status:"confirmed",assignedTo:"Dr. Lia Tan",meet:"https://meet.google.com/demo-busy",createdAt:isoIn(1,14,32),acceptedAt:isoIn(1,14,40),consultEndAt:""},
   ],
   settings:{ routing:"longest_idle", "building:WFH":"online" }, // routing + per-building mode rules
 };
@@ -645,6 +653,15 @@ function mockApi(path,opts){
       const b=MOCK.bookings.find(x=>(x.trackingId||'').toUpperCase()===id);
       if(!b)return r({error:'not_found'});
       return r(b);
+    }
+    if(path.indexOf('/slots')===0){
+      const counts={};
+      MOCK.bookings.forEach(b=>{
+        if(b.status==='completed'||b.status==='cancelled')return;
+        const k=slotKeyESTclient(b.date); if(!k)return;
+        counts[k]=(counts[k]||0)+1;
+      });
+      return r({counts});
     }
     r({ok:true});
   },150));
@@ -1326,6 +1343,7 @@ function beep(){
 async function renderEmployee(v){
   if(!SESSION)return;
   if(!DATA.settings){ try{ DATA.settings=await api('/settings'); }catch(e){} }
+  loadSlotCounts();
   const staff=await api('/staff');
   const available=staff.filter(s=>(isClinicianRole(s.role))&&s.status==='available');
   const onsitePresent=available.length>0;
@@ -1357,10 +1375,11 @@ function bookFormHTML(onsitePresent){
         <select id="bk_building" onchange="onBuildingChange()">${BUILDINGS.map(b=>`<option value="${b}">${b}</option>`).join('')}</select></div>
     </div>
     <div class="row2">
-      <div class="field"><label>Preferred date <span class="req">*</span></label><input id="bk_date" type="date"/></div>
+      <div class="field"><label>Preferred date <span class="req">*</span></label><input id="bk_date" type="date" onchange="checkSlotWarning()"/></div>
       <div class="field"><label>Time (EST) <span class="req">*</span></label>
-        <select id="bk_time">${timeSlotOptions()}</select></div>
+        <select id="bk_time" onchange="checkSlotWarning()">${timeSlotOptions()}</select></div>
     </div>
+    <p id="bk_slotwarn" class="slot-warn hidden"></p>
     <div class="field"><label>Consultation type</label>
       <div id="bk_modewrap">${modeFieldHTML(BUILDINGS[0])}</div>
       <p id="bk_modehint" class="mode-hint"></p>
@@ -1404,6 +1423,40 @@ function estDateToISO(dateStr, timeStr){
   const offset=guess.getTime()-nyAsUTC; // ms NY is behind UTC
   // we want NY wall-clock == h:mi, so the real UTC instant is guess + offset
   return new Date(guess.getTime()+offset).toISOString();
+}
+// Client mirror of the server slot key: floor an ISO datetime to its 30-min EST slot.
+function slotKeyESTclient(iso){
+  if(!iso)return '';
+  const d=new Date(iso); if(isNaN(d))return '';
+  const parts=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,
+    year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).formatToParts(d);
+  const g=t=>parts.find(p=>p.type===t).value;
+  const min=Number(g('minute')); const slotMin=min<30?'00':'30';
+  let hh=g('hour'); if(hh==='24')hh='00';
+  return `${g('year')}-${g('month')}-${g('day')}T${hh}:${slotMin}`;
+}
+// the slot the employee picked (date + time) → its EST slot key
+function selectedSlotKey(){
+  const dateEl=document.getElementById('bk_date'), timeEl=document.getElementById('bk_time');
+  if(!dateEl||!timeEl||!dateEl.value||!timeEl.value)return '';
+  try{ return slotKeyESTclient(estDateToISO(dateEl.value,timeEl.value)); }catch(e){ return ''; }
+}
+let SLOT_COUNTS={}; // {slotKey: count} loaded from /slots
+const SLOT_WARN_THRESHOLD=3; // warn when this many (or more) already booked
+async function loadSlotCounts(){
+  try{ const res=await api('/slots'); SLOT_COUNTS=(res&&res.counts)||{}; }catch(e){ SLOT_COUNTS={}; }
+}
+// Show/clear the soft warning under the time field. Never blocks submission.
+function checkSlotWarning(){
+  const box=document.getElementById('bk_slotwarn'); if(!box)return;
+  const key=selectedSlotKey();
+  const n = key ? (SLOT_COUNTS[key]||0) : 0;
+  if(key && n>=SLOT_WARN_THRESHOLD){
+    box.textContent=`⚠ ${n} patients are already scheduled at this time. You can still book, but please consider another timeslot.`;
+    box.classList.remove('hidden');
+  }else{
+    box.textContent=''; box.classList.add('hidden');
+  }
 }
 function modeFieldHTML(building){
   const rule=buildingMode(building); // both | online | onsite
@@ -1541,6 +1594,7 @@ function patchAvailableList(staff){
 async function renderPublic(){
   const v=document.getElementById('view');
   if(!DATA.settings){ try{ DATA.settings=await api('/settings'); }catch(e){} }
+  loadSlotCounts();
   const staff=await api('/staff');
   const onsitePresent=staff.filter(s=>(isClinicianRole(s.role))&&s.status==='available').length>0;
   v.innerHTML=`
