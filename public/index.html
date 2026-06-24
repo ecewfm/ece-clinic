@@ -648,20 +648,21 @@ function mockApi(path,opts){
       return r({ok:true});
     }
     if(path.indexOf('/track')===0){
+      // slot-count mode
+      if(/[?&]slots=(1|true)/.test(path)){
+        const counts={};
+        MOCK.bookings.forEach(b=>{
+          if(b.status==='completed'||b.status==='cancelled')return;
+          const k=slotKeyESTclient(b.date); if(!k)return;
+          counts[k]=(counts[k]||0)+1;
+        });
+        return r({counts});
+      }
       const m=path.match(/[?&]id=([^&]+)/);
       const id=m?decodeURIComponent(m[1]).toUpperCase():'';
       const b=MOCK.bookings.find(x=>(x.trackingId||'').toUpperCase()===id);
       if(!b)return r({error:'not_found'});
       return r(b);
-    }
-    if(path.indexOf('/slots')===0){
-      const counts={};
-      MOCK.bookings.forEach(b=>{
-        if(b.status==='completed'||b.status==='cancelled')return;
-        const k=slotKeyESTclient(b.date); if(!k)return;
-        counts[k]=(counts[k]||0)+1;
-      });
-      return r({counts});
     }
     r({ok:true});
   },150));
@@ -1444,7 +1445,7 @@ function selectedSlotKey(){
 let SLOT_COUNTS={}; // {slotKey: count} loaded from /slots
 const SLOT_WARN_THRESHOLD=3; // warn when this many (or more) already booked
 async function loadSlotCounts(){
-  try{ const res=await api('/slots'); SLOT_COUNTS=(res&&res.counts)||{}; }catch(e){ SLOT_COUNTS={}; }
+  try{ const res=await api('/track?slots=1'); SLOT_COUNTS=(res&&res.counts)||{}; }catch(e){ SLOT_COUNTS={}; }
 }
 // Show/clear the soft warning under the time field. Never blocks submission.
 function checkSlotWarning(){
