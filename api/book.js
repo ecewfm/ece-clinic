@@ -3,7 +3,7 @@
 // link exists; assignment happens later when a nurse/doctor confirms.
 const { appendRow, createMeetEvent, cors } = require("./_google");
 
-const COLS = ["id","trackingId","employee","zohoEmail","reason","mode","site","building","date","status","assignedTo","meet","eventId","createdAt","acceptedAt","consultEndAt"];
+const COLS = ["id","trackingId","employee","zohoEmail","reason","mode","site","building","date","status","assignedTo","meet","eventId","createdAt","acceptedAt","consultEndAt","cancelReason"];
 
 module.exports = async (req, res) => {
   cors(res);
