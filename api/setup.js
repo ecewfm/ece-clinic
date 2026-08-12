@@ -13,7 +13,7 @@ const SPEC = {
   Staff: ["id", "name", "role", "email", "status", "site", "building", "lastIdleAt", "canOnline", "canOnsite"],
   Bookings: ["id", "trackingId", "employee", "zohoEmail", "reason", "mode", "site",
              "building", "date", "status", "assignedTo", "meet", "eventId",
-             "createdAt", "acceptedAt", "consultEndAt", "cancelReason"],
+             "createdAt", "acceptedAt", "consultEndAt", "cancelReason", "cancelCategory"],
   Settings: ["key", "value"],
 };
 

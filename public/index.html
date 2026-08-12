@@ -454,6 +454,15 @@ function buildingMode(building){
   const v=s['building:'+building];
   return (v==='online'||v==='onsite')?v:'both';
 }
+// Cancellation/deletion categories, admin-managed in Settings (stored as a
+// comma-separated list under the 'cancelCategories' key). Falls back to defaults.
+const DEFAULT_CANCEL_CATEGORIES=['Patient requested reschedule','No longer needed','Patient unavailable','Duplicate booking','Booked in error','Other'];
+function cancelCategories(){
+  const s=DATA.settings||{};
+  const raw=s.cancelCategories;
+  const list=(raw||'').split(',').map(x=>x.trim()).filter(Boolean);
+  return list.length?list:DEFAULT_CANCEL_CATEGORIES.slice();
+}
 /* does a staff member match a booking's site AND building AND capability? */
 function staffMatchesBooking(staff,b){
   const ss=parseList(staff.site), sb=parseList(staff.building);
@@ -503,7 +512,7 @@ let MOCK = {
     {id:"b8",trackingId:"TRK-1052",employee:"Demo Three",zohoEmail:"three@ececontactcenters.com",reason:"Checkup",mode:"online",
       site:"Honduras",building:"WFH",date:isoIn(1,15,0),status:"confirmed",assignedTo:"Dr. Lia Tan",meet:"https://meet.google.com/demo-busy",createdAt:isoIn(1,14,32),acceptedAt:isoIn(1,14,40),consultEndAt:""},
   ],
-  settings:{ routing:"longest_idle", "building:WFH":"online" }, // routing + per-building mode rules
+  settings:{ routing:"longest_idle", "building:WFH":"online", cancelCategories:"Patient requested reschedule,No longer needed,Patient unavailable,Duplicate booking,Booked in error,Other" }, // routing + per-building mode rules + cancel categories
 };
 function isoIn(daysAhead,h,m){const d=new Date();d.setDate(d.getDate()+daysAhead);d.setHours(h,m,0,0);return d.toISOString();}
 
@@ -862,12 +871,16 @@ function siteTag(site){ if(!site)return ''; return `<span class="chip site">📍
 // ---- Cancel (nurse/doctor/admin) & Delete (admin only), both require a reason ----
 function openCancelBooking(id){
   const b=(DATA.bookings||[]).find(x=>x.id===id); if(!b)return;
+  const cats=cancelCategories();
   modal(`<div class="modal" style="width:min(460px,94vw)">
     <div class="modal-h"><h3>Cancel booking</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="modal-b">
       <p style="font-size:13.5px;color:var(--sage);margin-bottom:12px">Cancel the consultation for <b>${b.employee}</b>${b.trackingId?` (${b.trackingId})`:''}? This keeps the record for reporting.</p>
-      <div class="field"><label>Reason for cancellation <span class="req">*</span></label>
-        <textarea id="cxreason" rows="3" placeholder="e.g. patient requested reschedule, no longer needed" style="width:100%;padding:10px;border:1.5px solid var(--mist);border-radius:9px;font-family:inherit;font-size:13.5px;resize:vertical"></textarea></div>
+      <div class="field"><label>Category <span class="req">*</span></label>
+        <select id="cxcat"><option value="" disabled selected>Select a reason category…</option>
+          ${cats.map(c=>`<option value="${c.replace(/"/g,'&quot;')}">${c}</option>`).join('')}</select></div>
+      <div class="field"><label>Note <span class="req">*</span></label>
+        <textarea id="cxreason" rows="3" placeholder="Add details about why this is being cancelled" style="width:100%;padding:10px;border:1.5px solid var(--mist);border-radius:9px;font-family:inherit;font-size:13.5px;resize:vertical"></textarea></div>
       <div id="cxerr" class="login-err hidden"></div>
     </div>
     <div class="modal-f"><button class="btn btn-ghost" onclick="closeModal()">Keep booking</button>
@@ -875,23 +888,30 @@ function openCancelBooking(id){
   </div>`);
 }
 function submitCancelBooking(id){
-  const el=document.getElementById('cxreason'); const reason=el?el.value.trim():'';
+  const cat=(document.getElementById('cxcat')||{}).value||'';
+  const note=(document.getElementById('cxreason')||{}).value.trim();
   const err=document.getElementById('cxerr');
-  if(!reason){ if(err){err.textContent='Please enter a reason for cancelling.';err.classList.remove('hidden');} return; }
+  if(!cat){ if(err){err.textContent='Please select a category.';err.classList.remove('hidden');} return; }
+  if(!note){ if(err){err.textContent='Please add a note.';err.classList.remove('hidden');} return; }
+  const reason=`[${cat}] ${note}`;
   const b=(DATA.bookings||[]).find(x=>x.id===id);
-  if(b){ b.status='cancelled'; b.cancelReason=reason; }
+  if(b){ b.status='cancelled'; b.cancelCategory=cat; b.cancelReason=reason; }
   toast('Booking cancelled');
   closeModal(); renderTab();
-  fireAndSync('/booking-update',{id,status:'cancelled',cancelReason:reason});
+  fireAndSync('/booking-update',{id,status:'cancelled',cancelCategory:cat,cancelReason:reason});
 }
 function openDeleteBooking(id){
   const b=(DATA.bookings||[]).find(x=>x.id===id); if(!b)return;
+  const cats=cancelCategories();
   modal(`<div class="modal" style="width:min(460px,94vw)">
     <div class="modal-h"><h3>Delete booking</h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="modal-b">
       <p style="font-size:13.5px;color:var(--sage);margin-bottom:12px">Delete the booking for <b>${b.employee}</b>${b.trackingId?` (${b.trackingId})`:''}? It will be removed from the active queue. The record is kept (soft delete) for audit.</p>
-      <div class="field"><label>Reason for deletion <span class="req">*</span></label>
-        <textarea id="dxreason" rows="3" placeholder="e.g. duplicate booking, created in error" style="width:100%;padding:10px;border:1.5px solid var(--mist);border-radius:9px;font-family:inherit;font-size:13.5px;resize:vertical"></textarea></div>
+      <div class="field"><label>Category <span class="req">*</span></label>
+        <select id="dxcat"><option value="" disabled selected>Select a reason category…</option>
+          ${cats.map(c=>`<option value="${c.replace(/"/g,'&quot;')}">${c}</option>`).join('')}</select></div>
+      <div class="field"><label>Note <span class="req">*</span></label>
+        <textarea id="dxreason" rows="3" placeholder="Add details about why this is being deleted" style="width:100%;padding:10px;border:1.5px solid var(--mist);border-radius:9px;font-family:inherit;font-size:13.5px;resize:vertical"></textarea></div>
       <div id="dxerr" class="login-err hidden"></div>
     </div>
     <div class="modal-f"><button class="btn btn-ghost" onclick="closeModal()">Keep booking</button>
@@ -899,14 +919,17 @@ function openDeleteBooking(id){
   </div>`);
 }
 function submitDeleteBooking(id){
-  const el=document.getElementById('dxreason'); const reason=el?el.value.trim():'';
+  const cat=(document.getElementById('dxcat')||{}).value||'';
+  const note=(document.getElementById('dxreason')||{}).value.trim();
   const err=document.getElementById('dxerr');
-  if(!reason){ if(err){err.textContent='Please enter a reason for deleting.';err.classList.remove('hidden');} return; }
+  if(!cat){ if(err){err.textContent='Please select a category.';err.classList.remove('hidden');} return; }
+  if(!note){ if(err){err.textContent='Please add a note.';err.classList.remove('hidden');} return; }
+  const reason=`[${cat}] ${note}`;
   const b=(DATA.bookings||[]).find(x=>x.id===id);
-  if(b){ b.status='deleted'; b.cancelReason=reason; }
+  if(b){ b.status='deleted'; b.cancelCategory=cat; b.cancelReason=reason; }
   toast('Booking deleted');
   closeModal(); renderTab();
-  fireAndSync('/booking-update',{id,status:'deleted',cancelReason:reason});
+  fireAndSync('/booking-update',{id,status:'deleted',cancelCategory:cat,cancelReason:reason});
 }
 
 function confirmBooking(id){
@@ -1175,7 +1198,7 @@ async function renderReports(el){
         <thead><tr>
           <th>Tracking ID</th><th>Employee</th><th>Zoho email</th><th>Site</th><th>Building</th>
           <th>Type</th><th>Status</th><th>Assigned staff</th>
-          <th>Requested</th><th>Accepted</th><th>Waiting</th><th>Consult end</th><th>Handling</th><th>Meet link</th><th>Cancel/Delete reason</th>
+          <th>Requested</th><th>Accepted</th><th>Waiting</th><th>Consult end</th><th>Handling</th><th>Meet link</th><th>Cancel/Delete category</th><th>Cancel/Delete note</th>
         </tr></thead>
         <tbody>
         ${filtered.length?filtered.map(b=>`<tr>
@@ -1193,8 +1216,9 @@ async function renderReports(el){
           <td>${fmtDT(b.consultEndAt)}</td>
           <td>${handlingMs(b)!=null?fmtDur(handlingMs(b)):'—'}</td>
           <td>${b.meet?`<a class="meet-link" href="${b.meet}" target="_blank">link</a>`:'—'}</td>
-          <td class="sub">${b.cancelReason||'—'}</td>
-        </tr>`).join(''):`<tr><td colspan="15" style="text-align:center;padding:24px;color:var(--grey-green)">No bookings match these filters.</td></tr>`}
+          <td class="sub">${b.cancelCategory||(b.cancelReason&&b.cancelReason.match(/^\[(.+?)\]/)?b.cancelReason.match(/^\[(.+?)\]/)[1]:'—')}</td>
+          <td class="sub">${b.cancelReason?b.cancelReason.replace(/^\[.+?\]\s*/,''):'—'}</td>
+        </tr>`).join(''):`<tr><td colspan="16" style="text-align:center;padding:24px;color:var(--grey-green)">No bookings match these filters.</td></tr>`}
         </tbody>
       </table></div>
     </div>`;
@@ -1205,7 +1229,7 @@ function fmtDT(iso){ if(!iso)return '—'; const d=new Date(iso); if(isNaN(d))re
 function exportReportCSV(){
   const rows=applyReportFilters(DATA.bookings||[]).sort((a,b)=>new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0));
   const headers=['Tracking ID','Employee','Zoho email','Site','Building','Consultation type','Status','Assigned staff',
-    'Booking date/time','Requested at','Accepted at','Waiting time','Consult end','Handling time','Meet link','Cancel/Delete reason'];
+    'Booking date/time','Requested at','Accepted at','Waiting time','Consult end','Handling time','Meet link','Cancel/Delete category','Cancel/Delete note'];
   const esc=v=>{ const s=(v==null?'':String(v)); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
   const lines=[headers.join(',')];
   rows.forEach(b=>{
@@ -1214,7 +1238,9 @@ function exportReportCSV(){
       b.mode==='online'?'Online':'Onsite', b.status||'', b.assignedTo||'',
       b.date?new Date(b.date).toISOString():'', b.createdAt||'', b.acceptedAt||'',
       b.acceptedAt?fmtDur(waitingMs(b)):'', b.consultEndAt||'',
-      handlingMs(b)!=null?fmtDur(handlingMs(b)):'', b.meet||'', b.cancelReason||''
+      handlingMs(b)!=null?fmtDur(handlingMs(b)):'', b.meet||'',
+      b.cancelCategory||(b.cancelReason&&b.cancelReason.match(/^\[(.+?)\]/)?b.cancelReason.match(/^\[(.+?)\]/)[1]:''),
+      b.cancelReason?b.cancelReason.replace(/^\[.+?\]\s*/,''):''
     ].map(esc).join(','));
   });
   const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
@@ -1258,7 +1284,45 @@ async function renderSettings(el){
           </div>`;
         }).join('')}
       </div>
+    </div>
+    <div class="card" style="max-width:620px;margin-top:18px">
+      <h3><span class="dot"></span>Cancellation &amp; deletion categories</h3>
+      <p style="font-size:12.5px;color:var(--sage);margin-top:-8px;margin-bottom:16px">These appear as the required category dropdown when a booking is cancelled or deleted. Add or remove categories as needed.</p>
+      <div id="catList">
+        ${cancelCategories().map((c,i)=>`<div class="rule-row" style="align-items:center">
+          <div class="rule-name" style="flex:1">🏷️ ${c}</div>
+          <button class="btn btn-ghost" style="padding:6px 12px;color:#b3261e" onclick="removeCancelCategory(${i})">Remove</button>
+        </div>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <input id="newCat" type="text" placeholder="New category name" style="flex:1;padding:10px;border:1.5px solid var(--mist);border-radius:9px;font-family:inherit;font-size:13.5px"/>
+        <button class="btn btn-primary" style="padding:8px 16px" onclick="addCancelCategory()">Add</button>
+      </div>
+      <p style="font-size:11.5px;color:var(--grey-green);margin-top:12px">A note is always required in addition to the category.</p>
     </div>`;
+}
+function saveCancelCategories(list){
+  const val=list.join(',');
+  DATA.settings={...(DATA.settings||{}),cancelCategories:val}; // optimistic
+  renderTab();
+  fireAndSync('/settings',{cancelCategories:val});
+}
+function addCancelCategory(){
+  const el=document.getElementById('newCat'); if(!el)return;
+  const name=el.value.trim(); if(!name){ toast('Enter a category name'); return; }
+  const list=cancelCategories();
+  if(list.some(c=>c.toLowerCase()===name.toLowerCase())){ toast('That category already exists'); return; }
+  list.push(name);
+  saveCancelCategories(list);
+  toast('Category added');
+}
+function removeCancelCategory(i){
+  const list=cancelCategories();
+  if(i<0||i>=list.length)return;
+  if(list.length<=1){ toast('Keep at least one category'); return; }
+  list.splice(i,1);
+  saveCancelCategories(list);
+  toast('Category removed');
 }
 async function setBuildingMode(building,mode){
   DATA.settings={...(DATA.settings||{}),['building:'+building]:mode}; // optimistic

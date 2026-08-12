@@ -1,7 +1,7 @@
 // api/booking-update.js — POST { id, ...patch } to confirm/assign/complete a booking.
 const { updateRow, cors } = require("./_google");
 
-const COLS = ["id","trackingId","employee","zohoEmail","reason","mode","site","building","date","status","assignedTo","meet","eventId","createdAt","acceptedAt","consultEndAt","cancelReason"];
+const COLS = ["id","trackingId","employee","zohoEmail","reason","mode","site","building","date","status","assignedTo","meet","eventId","createdAt","acceptedAt","consultEndAt","cancelReason","cancelCategory"];
 
 module.exports = async (req, res) => {
   cors(res);
